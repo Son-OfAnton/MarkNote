@@ -2,6 +2,7 @@ click==8.1.8
 Jinja2==3.1.6
 Markdown==3.8
 markdown-it-py==3.0.0
+-e git+https://github.com/Son-OfAnton/MarkNote.git@2c758fccabd584784de2588159665d3f7b4c5b30#egg=marknote
 MarkupSafe==3.0.2
 mdurl==0.1.2
 Pygments==2.19.1

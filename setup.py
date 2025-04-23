@@ -4,9 +4,9 @@ setup(
     name="marknote",
     version="0.1.0",
     description="A command-line tool for creating, organizing, and managing Markdown-based notes",
-    author="MarkNote Team",
+    author="Admas Terefe Girma",
     author_email="aadmasterefe00@gmail.com",
-    url="https://github.com/yourusername/marknote",
+    url="https://github.com/Son-OfAnton/MarkNote.git",
     packages=find_packages(exclude=["tests"]),
     include_package_data=True,
     install_requires=[
