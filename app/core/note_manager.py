@@ -139,12 +139,65 @@ class NoteManager:
         
         return note
 
+    def find_note_path(self, title: str, category: Optional[str] = None,
+                      output_dir: Optional[str] = None) -> Optional[str]:
+        """
+        Find a note's file path based on title, category, and optional output directory.
+        This is a more thorough search method that will try multiple combinations.
+        
+        Args:
+            title: The title of the note.
+            category: Optional category of the note.
+            output_dir: Optional specific directory to look for the note.
+            
+        Returns:
+            The path to the note file if found, None otherwise.
+        """
+        # Generate filename from title
+        filename = f"{slugify(title)}.md"
+        
+        # Determine the base directory
+        if output_dir:
+            base_dir = os.path.expanduser(output_dir)
+            if not os.path.isabs(base_dir):
+                base_dir = os.path.abspath(base_dir)
+        else:
+            base_dir = self.notes_dir
+        
+        # Try various combinations to find the note
+        possible_paths = []
+        
+        # If category is provided, prioritize that path
+        if category:
+            possible_paths.append(os.path.join(base_dir, category, filename))
+        
+        # Also try without category (in case the note is directly in the base directory)
+        possible_paths.append(os.path.join(base_dir, filename))
+        
+        # If category is not provided, also check in all subdirectories
+        if not category:
+            try:
+                for item in os.listdir(base_dir):
+                    item_path = os.path.join(base_dir, item)
+                    if os.path.isdir(item_path):
+                        possible_paths.append(os.path.join(item_path, filename))
+            except (FileNotFoundError, PermissionError):
+                # If we can't access the directory, just continue with other checks
+                pass
+        
+        # Check each path in order
+        for path in possible_paths:
+            if os.path.isfile(path):
+                return path
+                
+        return None
+
     def update_note(self, title: str, new_content: Optional[str] = None, 
                    new_tags: Optional[List[str]] = None,
                    new_category: Optional[str] = None,
                    additional_metadata: Optional[Dict[str, Any]] = None,
                    category: Optional[str] = None,
-                   output_dir: Optional[str] = None) -> Tuple[bool, Note, str]:
+                   output_dir: Optional[str] = None) -> Tuple[bool, Optional[Note], str]:
         """
         Update an existing note.
         
@@ -163,7 +216,63 @@ class NoteManager:
         # Get the existing note
         note = self.get_note(title, category, output_dir)
         if not note:
-            return False, None, f"Note '{title}' not found"
+            # Try a more thorough search
+            note_path = self.find_note_path(title, category, output_dir)
+            if note_path:
+                # Try to read the note content
+                try:
+                    with open(note_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        
+                    # Parse frontmatter and content
+                    metadata, content_without_frontmatter = parse_frontmatter(content)
+                    
+                    # Extract category from path if it doesn't match the filename directly
+                    path_parts = os.path.normpath(note_path).split(os.path.sep)
+                    if len(path_parts) >= 2:
+                        # Check if second-to-last part is a directory (category)
+                        possible_category = path_parts[-2]
+                        # Verify this is not the base directory name
+                        base_name = os.path.basename(output_dir if output_dir else self.notes_dir)
+                        detected_category = possible_category if possible_category != base_name else category
+                    else:
+                        detected_category = category
+                    
+                    # Create a note object
+                    created_at = metadata.get('created_at')
+                    if isinstance(created_at, str):
+                        try:
+                            created_at = datetime.fromisoformat(created_at)
+                        except ValueError:
+                            created_at = datetime.now()
+                    else:
+                        created_at = datetime.now()
+                        
+                    updated_at = metadata.get('updated_at')
+                    if isinstance(updated_at, str):
+                        try:
+                            updated_at = datetime.fromisoformat(updated_at)
+                        except ValueError:
+                            updated_at = datetime.now()
+                    else:
+                        updated_at = datetime.now()
+                    
+                    note = Note(
+                        title=title,
+                        content=content_without_frontmatter,
+                        created_at=created_at,
+                        updated_at=updated_at,
+                        tags=metadata.get('tags', []),
+                        category=metadata.get('category', detected_category),
+                        filename=os.path.basename(note_path),
+                        metadata=metadata
+                    )
+                    note.metadata['path'] = note_path
+                    
+                except Exception as e:
+                    return False, None, f"Found note at {note_path} but failed to read it: {str(e)}"
+            else:
+                return False, None, f"Note '{title}' not found"
         
         # Update the note content if provided
         if new_content is not None:
@@ -279,27 +388,10 @@ class NoteManager:
         Returns:
             The Note object if found, None otherwise.
         """
-        filename = f"{slugify(title)}.md"
+        # Try to find the note path
+        note_path = self.find_note_path(title, category, output_dir)
         
-        # Determine the directory to look for the note
-        if output_dir:
-            # If output_dir specified, use it instead of the default
-            base_dir = os.path.expanduser(output_dir)
-            if not os.path.isabs(base_dir):
-                base_dir = os.path.abspath(base_dir)
-                
-            note_dir = base_dir
-            if category:
-                note_dir = os.path.join(base_dir, category)
-        else:
-            # Use the default notes directory
-            note_dir = self.notes_dir
-            if category:
-                note_dir = os.path.join(note_dir, category)
-        
-        note_path = os.path.join(note_dir, filename)
-        
-        if not os.path.exists(note_path):
+        if not note_path:
             return None
         
         # Read the note content
@@ -321,7 +413,19 @@ class NoteManager:
             updated_at = datetime.now()
             
         tags = metadata.get('tags', [])
-        category = metadata.get('category', category)
+        detected_category = metadata.get('category', category)
+        
+        # If no category is provided in metadata, try to determine it from the path
+        if not detected_category:
+            path_parts = os.path.normpath(note_path).split(os.path.sep)
+            if len(path_parts) >= 2:
+                # Check if second-to-last part might be a category directory
+                possible_category = path_parts[-2]
+                # Get the base directory name to avoid confusing it with a category
+                base_dir = output_dir if output_dir else self.notes_dir
+                base_name = os.path.basename(os.path.normpath(base_dir))
+                if possible_category != base_name:
+                    detected_category = possible_category
         
         # Create and return the note object
         note = Note(
@@ -330,8 +434,8 @@ class NoteManager:
             created_at=created_at,
             updated_at=updated_at,
             tags=tags,
-            category=category,
-            filename=filename,
+            category=detected_category,
+            filename=os.path.basename(note_path),
             metadata=metadata
         )
         

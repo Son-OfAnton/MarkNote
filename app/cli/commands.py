@@ -13,6 +13,7 @@ from app.core.note_manager import NoteManager
 from app.utils.template_manager import TemplateManager
 from app.utils.editor_handler import edit_file, edit_content
 from app.utils.file_handler import parse_frontmatter
+from app.models.note import Note
 
 console = Console()
 
@@ -145,7 +146,7 @@ def new(title: str, template: str, tags: Optional[str], category: Optional[str],
             
             # Ask if user wants to edit the note immediately
             if Confirm.ask("Would you like to edit this note now?", default=False):
-                return edit([title], category=category, output_dir=output_dir)
+                return edit_note([title], category=category, output_dir=output_dir)
             
             return 0
             
@@ -262,6 +263,10 @@ def search(query, output_dir):
 @click.option("--output-dir", "-o", help="Custom directory to look in. Overrides the default location.")
 def edit(titles, category, output_dir):
     """Edit one or more notes with the given TITLES in your default editor."""
+    return edit_note(titles, category, output_dir)
+
+def edit_note(titles, category=None, output_dir=None):
+    """Implementation of the edit functionality to allow reuse."""
     try:
         note_manager = NoteManager()
         
@@ -270,12 +275,48 @@ def edit(titles, category, output_dir):
             note = note_manager.get_note(title, category, output_dir=output_dir)
             
             if not note:
-                console.print(f"[bold red]Error:[/bold red] Note '{title}' not found.")
-                if category:
-                    console.print(f"Make sure the category '{category}' is correct.")
-                if output_dir:
-                    console.print(f"Looking in directory: {output_dir}")
-                continue
+                # Try to find the note without relying on exact category match
+                note_path = note_manager.find_note_path(title, category, output_dir)
+                if note_path:
+                    console.print(f"[yellow]Note found at a different location than specified:[/yellow] {note_path}")
+                    
+                    # Try to read the note and recreate the Note object
+                    try:
+                        with open(note_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            
+                        metadata, content_without_frontmatter = parse_frontmatter(content)
+                        
+                        # Extract category from path if possible
+                        path_parts = os.path.normpath(note_path).split(os.path.sep)
+                        detected_category = None
+                        if len(path_parts) >= 2:
+                            possible_category = path_parts[-2]
+                            base_dir = output_dir if output_dir else note_manager.notes_dir
+                            base_name = os.path.basename(os.path.normpath(base_dir))
+                            if possible_category != base_name:
+                                detected_category = possible_category
+                                console.print(f"[yellow]Detected category from path:[/yellow] {detected_category}")
+                        
+                        # Create a temporary note object
+                        from datetime import datetime
+                        note = Note(
+                            title=title,
+                            content=content_without_frontmatter,
+                            category=detected_category or category,
+                            filename=os.path.basename(note_path),
+                            metadata={'path': note_path}
+                        )
+                    except Exception as e:
+                        console.print(f"[bold red]Error reading note:[/bold red] {str(e)}")
+                        continue
+                else:
+                    console.print(f"[bold red]Error:[/bold red] Note '{title}' not found.")
+                    if category:
+                        console.print(f"Make sure the category '{category}' is correct.")
+                    if output_dir:
+                        console.print(f"Looking in directory: {output_dir}")
+                    continue
                 
             # Get the file path
             path = note.metadata.get('path', '')
@@ -283,7 +324,12 @@ def edit(titles, category, output_dir):
                 console.print(f"[bold red]Error:[/bold red] Can't find note file at {path}")
                 continue
             
-            console.print(f"Editing note: [bold cyan]{title}[/bold cyan]")
+            # Display note information before editing
+            detected_category = note.category or (category if category else None)
+            if detected_category:
+                console.print(f"Editing note: [bold cyan]{title}[/bold cyan] in category [bold green]{detected_category}[/bold green]")
+            else:
+                console.print(f"Editing note: [bold cyan]{title}[/bold cyan]")
             console.print(f"File: [dim]{path}[/dim]")
             
             # Open the file in the user's editor
@@ -293,19 +339,20 @@ def edit(titles, category, output_dir):
                 console.print(f"[bold red]Error editing note:[/bold red] {error}")
                 return 1
             
-            # Check if the file was modified
-            modified_time = os.path.getmtime(path)
-            
             # Read the updated content
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except Exception as e:
+                console.print(f"[bold red]Error reading updated file:[/bold red] {str(e)}")
+                return 1
                 
             # Parse frontmatter and content
             metadata, content_without_frontmatter = parse_frontmatter(content)
             
             # Update the note in our system with the new content
             success, updated_note, error = note_manager.edit_note_content(
-                title, content_without_frontmatter, category, output_dir
+                title, content_without_frontmatter, category=detected_category, output_dir=output_dir
             )
             
             if success:
@@ -341,12 +388,31 @@ def show(title, category, output_dir):
             ))
             return 0
         else:
-            console.print(f"[bold red]Error:[/bold red] Note '{title}' not found.")
-            if category:
-                console.print(f"Make sure the category '{category}' is correct.")
-            if output_dir:
-                console.print(f"Looking in directory: {output_dir}")
-            return 1
+            # Try to find the note without relying on exact category match
+            note_path = note_manager.find_note_path(title, category, output_dir)
+            if note_path:
+                console.print(f"[yellow]Note found at:[/yellow] {note_path}")
+                
+                # Try to read the note content
+                with open(note_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                metadata, content_without_frontmatter = parse_frontmatter(content)
+                
+                # Display the note
+                console.print(Panel(
+                    f"[bold cyan]{title}[/bold cyan]\n\n{content_without_frontmatter}",
+                    title=f"MarkNote - {title}",
+                    subtitle="Note found with alternative path lookup"
+                ))
+                return 0
+            else:
+                console.print(f"[bold red]Error:[/bold red] Note '{title}' not found.")
+                if category:
+                    console.print(f"Make sure the category '{category}' is correct.")
+                if output_dir:
+                    console.print(f"Looking in directory: {output_dir}")
+                return 1
     
     except Exception as e:
         console.print(f"[bold red]Error displaying note:[/bold red] {str(e)}")
