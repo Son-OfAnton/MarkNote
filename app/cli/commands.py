@@ -11,6 +11,8 @@ from rich.prompt import Prompt, Confirm
 
 from app.core.note_manager import NoteManager
 from app.utils.template_manager import TemplateManager
+from app.utils.editor_handler import edit_file, edit_content
+from app.utils.file_handler import parse_frontmatter
 
 console = Console()
 
@@ -141,6 +143,10 @@ def new(title: str, template: str, tags: Optional[str], category: Optional[str],
                 f"[bold]Path:[/bold] {os.path.dirname(note_path)}"
             ))
             
+            # Ask if user wants to edit the note immediately
+            if Confirm.ask("Would you like to edit this note now?", default=False):
+                return edit([title], category=category, output_dir=output_dir)
+            
             return 0
             
         except FileExistsError as e:
@@ -248,6 +254,72 @@ def search(query, output_dir):
         return 0
     except Exception as e:
         console.print(f"[bold red]Error searching notes:[/bold red] {str(e)}")
+        return 1
+
+@cli.command()
+@click.argument("titles", nargs=-1, required=True)
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look in. Overrides the default location.")
+def edit(titles, category, output_dir):
+    """Edit one or more notes with the given TITLES in your default editor."""
+    try:
+        note_manager = NoteManager()
+        
+        for title in titles:
+            # Get the note
+            note = note_manager.get_note(title, category, output_dir=output_dir)
+            
+            if not note:
+                console.print(f"[bold red]Error:[/bold red] Note '{title}' not found.")
+                if category:
+                    console.print(f"Make sure the category '{category}' is correct.")
+                if output_dir:
+                    console.print(f"Looking in directory: {output_dir}")
+                continue
+                
+            # Get the file path
+            path = note.metadata.get('path', '')
+            if not path or not os.path.exists(path):
+                console.print(f"[bold red]Error:[/bold red] Can't find note file at {path}")
+                continue
+            
+            console.print(f"Editing note: [bold cyan]{title}[/bold cyan]")
+            console.print(f"File: [dim]{path}[/dim]")
+            
+            # Open the file in the user's editor
+            success, error = edit_file(path)
+            
+            if not success:
+                console.print(f"[bold red]Error editing note:[/bold red] {error}")
+                return 1
+            
+            # Check if the file was modified
+            modified_time = os.path.getmtime(path)
+            
+            # Read the updated content
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+            # Parse frontmatter and content
+            metadata, content_without_frontmatter = parse_frontmatter(content)
+            
+            # Update the note in our system with the new content
+            success, updated_note, error = note_manager.edit_note_content(
+                title, content_without_frontmatter, category, output_dir
+            )
+            
+            if success:
+                console.print(f"[bold green]Note updated successfully![/bold green]")
+            else:
+                console.print(f"[bold red]Error updating note:[/bold red] {error}")
+                return 1
+        
+        return 0
+    
+    except Exception as e:
+        console.print(f"[bold red]Error editing note:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
         return 1
 
 @cli.command()

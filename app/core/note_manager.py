@@ -2,7 +2,7 @@
 Core note management functionality for MarkNote.
 """
 import os
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 import yaml
 from slugify import slugify
@@ -139,6 +139,132 @@ class NoteManager:
         
         return note
 
+    def update_note(self, title: str, new_content: Optional[str] = None, 
+                   new_tags: Optional[List[str]] = None,
+                   new_category: Optional[str] = None,
+                   additional_metadata: Optional[Dict[str, Any]] = None,
+                   category: Optional[str] = None,
+                   output_dir: Optional[str] = None) -> Tuple[bool, Note, str]:
+        """
+        Update an existing note.
+        
+        Args:
+            title: The title of the note to update.
+            new_content: Optional new content for the note.
+            new_tags: Optional new tags for the note.
+            new_category: Optional new category for the note.
+            additional_metadata: Optional additional metadata to update.
+            category: Optional category to help find the note.
+            output_dir: Optional directory to look for the note.
+            
+        Returns:
+            A tuple of (success, updated note, error message).
+        """
+        # Get the existing note
+        note = self.get_note(title, category, output_dir)
+        if not note:
+            return False, None, f"Note '{title}' not found"
+        
+        # Update the note content if provided
+        if new_content is not None:
+            note.content = new_content
+        
+        # Update tags if provided
+        if new_tags is not None:
+            note.tags = new_tags
+        
+        # Update category if provided
+        if new_category is not None:
+            note.category = new_category
+        
+        # Update additional metadata if provided
+        if additional_metadata:
+            for key, value in additional_metadata.items():
+                note.metadata[key] = value
+        
+        # Update the updated_at timestamp
+        note.updated_at = datetime.now()
+        
+        # Prepare metadata for saving
+        metadata = {
+            'title': note.title,
+            'created_at': note.created_at.isoformat(),
+            'updated_at': note.updated_at.isoformat(),
+        }
+        
+        if note.tags:
+            metadata['tags'] = note.tags
+        
+        if note.category:
+            metadata['category'] = note.category
+        
+        # Add other metadata
+        for key, value in note.metadata.items():
+            if key not in ['title', 'created_at', 'updated_at', 'tags', 'category', 'path']:
+                metadata[key] = value
+        
+        # If the category changed, we need to move the file
+        note_path = note.metadata.get('path')
+        if new_category is not None and new_category != note.category:
+            # Determine base directory
+            if output_dir:
+                base_dir = os.path.expanduser(output_dir)
+                if not os.path.isabs(base_dir):
+                    base_dir = os.path.abspath(base_dir)
+            else:
+                base_dir = self.notes_dir
+                
+            # Create new directory if needed
+            new_dir = os.path.join(base_dir, new_category) if new_category else base_dir
+            if not os.path.exists(new_dir):
+                os.makedirs(new_dir)
+                
+            # Determine new path
+            new_path = os.path.join(new_dir, note.filename)
+            
+            # Check if target file already exists
+            if os.path.exists(new_path):
+                return False, note, f"Cannot move note to category '{new_category}': a note with the same name already exists"
+                
+            # Delete original file only after we've successfully created the new one
+            try:
+                # Add frontmatter to content
+                full_content = add_frontmatter(note.content, metadata)
+                
+                # Write to the new location
+                with open(new_path, 'w', encoding='utf-8') as f:
+                    f.write(full_content)
+                    
+                # Update the path in the note
+                note.metadata['path'] = new_path
+                    
+                # Remove the old file
+                if os.path.exists(note_path):
+                    os.remove(note_path)
+                
+                # Check if old category directory is empty and remove it if so
+                old_dir = os.path.dirname(note_path)
+                if os.path.exists(old_dir) and old_dir != base_dir:
+                    if not os.listdir(old_dir):
+                        os.rmdir(old_dir)
+                
+                return True, note, ""
+            except Exception as e:
+                return False, note, f"Error moving note: {str(e)}"
+        else:
+            # Just update the existing file
+            try:
+                # Add frontmatter to content
+                full_content = add_frontmatter(note.content, metadata)
+                
+                # Write to the file
+                with open(note_path, 'w', encoding='utf-8') as f:
+                    f.write(full_content)
+                
+                return True, note, ""
+            except Exception as e:
+                return False, note, f"Error updating note: {str(e)}"
+
     def get_note(self, title: str, category: Optional[str] = None,
                 output_dir: Optional[str] = None) -> Optional[Note]:
         """
@@ -213,6 +339,24 @@ class NoteManager:
         note.metadata['path'] = note_path
         
         return note
+
+    def edit_note_content(self, title: str, new_content: str, 
+                          category: Optional[str] = None,
+                          output_dir: Optional[str] = None) -> Tuple[bool, Optional[Note], str]:
+        """
+        Edit the content of an existing note.
+        
+        Args:
+            title: The title of the note to edit.
+            new_content: The new content for the note.
+            category: Optional category to help find the note.
+            output_dir: Optional directory to look for the note.
+            
+        Returns:
+            A tuple of (success, updated note, error message).
+        """
+        return self.update_note(title, new_content=new_content, 
+                               category=category, output_dir=output_dir)
 
     def list_notes(self, tag: Optional[str] = None, 
                    category: Optional[str] = None,
