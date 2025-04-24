@@ -8,10 +8,11 @@ import click
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
+import app.models.note
 
 from app.core.note_manager import NoteManager
 from app.utils.template_manager import TemplateManager
-from app.utils.editor_handler import edit_file, edit_content
+from app.utils.editor_handler import edit_file, edit_content, is_valid_editor, get_available_editors
 from app.utils.file_handler import parse_frontmatter
 from app.models.note import Note
 
@@ -32,10 +33,19 @@ def cli():
               help="Interactive mode for entering additional metadata.")
 @click.option("--force", "-f", is_flag=True, help="Force overwrite if the note already exists.")
 @click.option("--output-dir", "-o", help="Custom directory to save the note to. Overrides the default location.")
+@click.option("--editor", "-e", help="Specify which editor to use for editing the note (if opening for edit).")
 def new(title: str, template: str, tags: Optional[str], category: Optional[str], 
-        interactive: bool, force: bool, output_dir: Optional[str]):
+        interactive: bool, force: bool, output_dir: Optional[str], editor: Optional[str] = None):
     """Create a new note with the given TITLE."""
     try:
+        # Validate the specified editor if provided
+        if editor and not is_valid_editor(editor):
+            console.print(f"[bold red]Error:[/bold red] Specified editor '{editor}' not found or not executable")
+            available_editors = get_available_editors()
+            if available_editors:
+                console.print(f"Available editors: {', '.join(available_editors)}")
+            return 1
+            
         # Create note manager
         note_manager = NoteManager()
         
@@ -98,6 +108,18 @@ def new(title: str, template: str, tags: Optional[str], category: Optional[str],
                 output_dir_input = Prompt.ask("Save to directory", default=default_dir)
                 if output_dir_input and output_dir_input != default_dir:
                     output_dir = output_dir_input
+                    
+            # Get editor if not provided
+            if not editor:
+                available_editors = get_available_editors()
+                if available_editors:
+                    console.print(f"Available editors: [cyan]{', '.join(available_editors)}[/cyan]")
+                    editor_input = Prompt.ask("Editor (leave blank for system default)", default="")
+                    if editor_input:
+                        if is_valid_editor(editor_input):
+                            editor = editor_input
+                        else:
+                            console.print(f"[yellow]Warning: Editor '{editor_input}' not found, using system default.[/yellow]")
             
             # Get additional metadata based on template
             if template == "meeting":
@@ -117,6 +139,8 @@ def new(title: str, template: str, tags: Optional[str], category: Optional[str],
             action_desc += f", category: {category}"
         if tag_list:
             action_desc += f", tags: {', '.join(tag_list)}"
+        if editor:
+            action_desc += f", editor: {editor}"
         console.print(f"[blue]{action_desc}[/blue]")
         
         # Create the note
@@ -146,7 +170,7 @@ def new(title: str, template: str, tags: Optional[str], category: Optional[str],
             
             # Ask if user wants to edit the note immediately
             if Confirm.ask("Would you like to edit this note now?", default=False):
-                return edit_note([title], category=category, output_dir=output_dir)
+                return edit_note([title], category=category, output_dir=output_dir, editor=editor)
             
             return 0
             
@@ -261,13 +285,25 @@ def search(query, output_dir):
 @click.argument("titles", nargs=-1, required=True)
 @click.option("--category", "-c", help="Category of the note.")
 @click.option("--output-dir", "-o", help="Custom directory to look in. Overrides the default location.")
-def edit(titles, category, output_dir):
-    """Edit one or more notes with the given TITLES in your default editor."""
-    return edit_note(titles, category, output_dir)
+@click.option("--editor", "-e", help="Specify which editor to use for editing.")
+def edit(titles, category, output_dir, editor):
+    """Edit one or more notes with the given TITLES in your preferred editor.
+    
+    You can specify a custom editor with the --editor option, otherwise the system default will be used.
+    """
+    return edit_note(titles, category, output_dir, editor)
 
-def edit_note(titles, category=None, output_dir=None):
+def edit_note(titles, category=None, output_dir=None, editor=None):
     """Implementation of the edit functionality to allow reuse."""
     try:
+        # Validate the specified editor if provided
+        if editor and not is_valid_editor(editor):
+            console.print(f"[bold red]Error:[/bold red] Specified editor '{editor}' not found or not executable")
+            available_editors = get_available_editors()
+            if available_editors:
+                console.print(f"Available editors: {', '.join(available_editors)}")
+            return 1
+        
         note_manager = NoteManager()
         
         for title in titles:
@@ -332,8 +368,12 @@ def edit_note(titles, category=None, output_dir=None):
                 console.print(f"Editing note: [bold cyan]{title}[/bold cyan]")
             console.print(f"File: [dim]{path}[/dim]")
             
+            # Show which editor is being used
+            editor_display = editor if editor else "system default"
+            console.print(f"Using editor: [bold magenta]{editor_display}[/bold magenta]")
+            
             # Open the file in the user's editor
-            success, error = edit_file(path)
+            success, error = edit_file(path, custom_editor=editor)
             
             if not success:
                 console.print(f"[bold red]Error editing note:[/bold red] {error}")
@@ -437,6 +477,34 @@ def templates():
     
     except Exception as e:
         console.print(f"[bold red]Error listing templates:[/bold red] {str(e)}")
+        return 1
+
+@cli.command()
+def editors():
+    """List available editors on your system."""
+    try:
+        available_editors = get_available_editors()
+        
+        if not available_editors:
+            console.print("[yellow]No recognized editors found on your system.[/yellow]")
+            console.print("You can still specify a custom editor with the --editor option.")
+            return 0
+        
+        console.print("[bold blue]Available editors on your system:[/bold blue]")
+        for editor in available_editors:
+            console.print(f"- [cyan]{editor}[/cyan]")
+            
+        # Show current default editor
+        from app.utils.editor_handler import get_editor
+        default_editor = get_editor()
+        console.print(f"\n[bold green]Default editor:[/bold green] {default_editor}")
+        console.print("\n[dim]You can change the default editor by setting the EDITOR or VISUAL environment variable,[/dim]")
+        console.print("[dim]or specify a different editor for a single command with --editor (-e) option.[/dim]")
+        
+        return 0
+    
+    except Exception as e:
+        console.print(f"[bold red]Error listing editors:[/bold red] {str(e)}")
         return 1
 
 if __name__ == "__main__":

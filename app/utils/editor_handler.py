@@ -5,7 +5,8 @@ import os
 import sys
 import tempfile
 import subprocess
-from typing import Optional, Tuple
+import shutil
+from typing import Optional, Tuple, List
 from datetime import datetime
 
 def get_editor() -> str:
@@ -39,17 +40,75 @@ def get_editor() -> str:
     # Final fallback
     return 'nano'  # Most Unix-like systems have nano
 
-def edit_file(file_path: str) -> Tuple[bool, str]:
+def is_valid_editor(editor: str) -> bool:
     """
-    Open a file in the user's preferred editor.
+    Check if the specified editor is valid and available.
+    
+    Args:
+        editor: Path or name of the editor.
+        
+    Returns:
+        True if the editor is valid, False otherwise.
+    """
+    # If editor contains a path separator, check if it exists as a file
+    if os.path.sep in editor:
+        return os.path.isfile(editor) and os.access(editor, os.X_OK)
+        
+    # Otherwise check if it's in PATH
+    try:
+        if sys.platform.startswith('win'):
+            # On Windows, use where command
+            result = subprocess.run(['where', editor], 
+                                   stdout=subprocess.PIPE, 
+                                   stderr=subprocess.PIPE,
+                                   text=True)
+        else:
+            # On Unix-like systems, use which command
+            result = subprocess.run(['which', editor], 
+                                   stdout=subprocess.PIPE, 
+                                   stderr=subprocess.PIPE,
+                                   text=True)
+                                   
+        return result.returncode == 0
+    except Exception:
+        return False
+
+def get_available_editors() -> List[str]:
+    """
+    Get a list of common editors available on the system.
+    
+    Returns:
+        List of editor names that are available.
+    """
+    common_editors = [
+        'vim', 'nano', 'emacs', 'vi', 'code', 'atom', 'sublime', 
+        'notepad++', 'notepad', 'gedit', 'kate'
+    ]
+    
+    available = []
+    for editor in common_editors:
+        if is_valid_editor(editor):
+            available.append(editor)
+            
+    return available
+
+def edit_file(file_path: str, custom_editor: Optional[str] = None) -> Tuple[bool, str]:
+    """
+    Open a file in an editor.
     
     Args:
         file_path: Path to the file to edit.
+        custom_editor: Optional specific editor to use instead of the default.
         
     Returns:
         A tuple of (success, error_message).
     """
-    editor = get_editor()
+    # Determine which editor to use
+    editor = custom_editor if custom_editor else get_editor()
+    
+    # Validate the editor
+    if custom_editor and not is_valid_editor(editor):
+        return False, f"Specified editor '{editor}' not found or not executable"
     
     try:
         # Ensure file exists
@@ -57,8 +116,24 @@ def edit_file(file_path: str) -> Tuple[bool, str]:
             return False, f"File not found: {file_path}"
         
         # Launch editor and wait for it to close
-        result = subprocess.run([editor, file_path], check=True)
-        return result.returncode == 0, ""
+        cmd = [editor, file_path]
+        
+        # Special case for some GUI editors that don't wait
+        gui_editors = {'code', 'atom', 'sublime', 'subl', 'vscode', 'notepad++', 'notepad', 'gedit', 'kate'}
+        editor_base = os.path.basename(editor).lower().split()[0]
+        
+        if editor_base in gui_editors:
+            # For GUI editors, we'll launch and wait a bit
+            process = subprocess.Popen(cmd)
+            print(f"Launched {editor_base}. Please close the editor when finished to continue.")
+            process.wait()
+        else:
+            # For terminal editors, just run normally
+            result = subprocess.run(cmd, check=True)
+            if result.returncode != 0:
+                return False, f"Editor exited with code: {result.returncode}"
+        
+        return True, ""
     except FileNotFoundError:
         return False, f"Editor not found: {editor}"
     except subprocess.CalledProcessError as e:
@@ -66,17 +141,23 @@ def edit_file(file_path: str) -> Tuple[bool, str]:
     except Exception as e:
         return False, f"Error opening editor: {str(e)}"
 
-def edit_content(content: str) -> Tuple[bool, str, str]:
+def edit_content(content: str, custom_editor: Optional[str] = None) -> Tuple[bool, str, str]:
     """
-    Edit content in the user's preferred editor using a temporary file.
+    Edit content in an editor using a temporary file.
     
     Args:
         content: The initial content to edit.
+        custom_editor: Optional specific editor to use instead of the default.
         
     Returns:
         A tuple of (success, edited_content, error_message).
     """
-    editor = get_editor()
+    # Determine which editor to use
+    editor = custom_editor if custom_editor else get_editor()
+    
+    # Validate the editor
+    if custom_editor and not is_valid_editor(editor):
+        return False, content, f"Specified editor '{editor}' not found or not executable"
     
     try:
         # Create a temporary file
@@ -85,16 +166,16 @@ def edit_content(content: str) -> Tuple[bool, str, str]:
             tmp.write(content)
         
         try:
-            # Launch editor and wait for it to close
-            result = subprocess.run([editor, tmp_path], check=True)
+            # Edit the file
+            success, error = edit_file(tmp_path, custom_editor)
             
-            if result.returncode == 0:
+            if success:
                 # Read the edited content
                 with open(tmp_path, 'r', encoding='utf-8') as f:
                     edited_content = f.read()
                 return True, edited_content, ""
             else:
-                return False, content, f"Editor exited with code: {result.returncode}"
+                return False, content, error
                 
         finally:
             # Clean up the temporary file
@@ -103,9 +184,5 @@ def edit_content(content: str) -> Tuple[bool, str, str]:
             except Exception:
                 pass
     
-    except FileNotFoundError:
-        return False, content, f"Editor not found: {editor}"
-    except subprocess.CalledProcessError as e:
-        return False, content, f"Editor exited with an error: {e}"
     except Exception as e:
         return False, content, f"Error opening editor: {str(e)}"
