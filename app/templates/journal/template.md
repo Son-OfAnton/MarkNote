@@ -5,8 +5,8 @@ updated_at: {{ updated_at }}
 {% if tags %}tags:
 {% for tag in tags %}  - {{ tag }}
 {% endfor %}{% endif %}
-{% if category %}category: {{ category }}{% endif %}
-type: journal
+{% if category %}category: {{ category }}
+{% endif %}type: journal
 date: {{ date | default(created_at.split('T')[0]) }}
 mood: {{ mood | default('') }}
 ---
@@ -33,4 +33,4 @@ Things I'm grateful for today:
 
 - [ ] 
 - [ ] 
-- [ ]
+- [ ] 

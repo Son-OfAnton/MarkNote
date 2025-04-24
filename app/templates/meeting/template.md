@@ -5,8 +5,8 @@ updated_at: {{ updated_at }}
 {% if tags %}tags:
 {% for tag in tags %}  - {{ tag }}
 {% endfor %}{% endif %}
-{% if category %}category: {{ category }}{% endif %}
-type: meeting
+{% if category %}category: {{ category }}
+{% endif %}type: meeting
 ---
 
 # {{ title }}
