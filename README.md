@@ -27,22 +27,51 @@ pip install -e ".[dev]"
 
 ## Usage
 
-```bash
-# Create a new note
+### Create a New Note
+
+# Basic
+
 marknote new "My New Note"
 
+# With options: template, tags, category, interactive mode, force, output directory, and editor
+
+marknote new "My New Note" --template default --tags "work,urgent" --category work --interactive --force --output-dir ~/notes --editor nano
+
+### List Notes
+
 # List all notes
+
 marknote list
 
-# Search for notes
-marknote search "keyword"
+# Filter by tag, category and specify output directory
 
-# Edit a note
-marknote edit "My New Note"
+marknote list --tag work --category work --output-dir ~/notes
 
-# Display a note with proper formatting
-marknote show "My New Note"
-```
+### Search Notes
+
+# Search notes by a query and specify output directory
+
+marknote search "meeting" --output-dir ~/notes
+
+### Edit Note(s)
+
+# Edit a note with options for category, output directory, and custom editor
+
+marknote edit "My New Note" --category work --output-dir ~/notes --editor vim
+
+### Show Note
+
+# Display a note with options for category and output directory
+
+marknote show "My New Note" --category work --output-dir ~/notes
+
+### List Templates
+
+marknote templates
+
+### List Available Editors
+
+marknote editors
 
 ## Development
 
