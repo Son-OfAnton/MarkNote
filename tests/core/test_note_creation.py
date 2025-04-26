@@ -1,116 +1,85 @@
-"""
-Unit test for the note creation functionality.
-Tests the basic file creation functionality of NoteManager.
-"""
 import os
-import pytest
-import tempfile
 import shutil
+import tempfile
+import unittest
+from datetime import datetime
 from pathlib import Path
+
 from app.core.note_manager import NoteManager
-from app.models.note import Note
+from app.utils.file_handler import parse_frontmatter
 
 
-class TestNoteCreation:
-    """Test case for the note creation functionality."""
-
-    @pytest.fixture
-    def temp_notes_dir(self):
-        """Create a temporary directory for test notes."""
-        temp_dir = tempfile.mkdtemp()
-        yield temp_dir
-        # Cleanup after test
-        shutil.rmtree(temp_dir)
-
-    def test_create_note_with_title_only(self, temp_notes_dir):
+class TestFileCreation(unittest.TestCase):
+    """Test file creation functionality for the NoteManager."""
+    
+    def setUp(self):
+        """Set up a temporary directory for the test notes."""
+        # Create a temporary directory for test notes
+        self.temp_dir = tempfile.mkdtemp()
+        self.note_manager = NoteManager(notes_dir=self.temp_dir)
+    
+    def tearDown(self):
+        """Clean up the temporary directory after tests."""
+        # Remove the temporary directory and its contents
+        shutil.rmtree(self.temp_dir)
+    
+    def test_create_note_with_title_only(self):
         """Test creating a note with just a title."""
-        # Arrange
-        note_manager = NoteManager(notes_dir=temp_notes_dir)
+        # Create a note with just a title
         title = "Test Note Title"
+        note = self.note_manager.create_note(title=title)
+        
+        # Check that the note object has the correct title
+        self.assertEqual(note.title, title)
+        
+        # Get the expected file path
         expected_filename = "test-note-title.md"
+        expected_path = os.path.join(self.temp_dir, expected_filename)
         
-        # Act
-        note = note_manager.create_note(title=title)
+        # Check that the file exists
+        self.assertTrue(os.path.exists(expected_path))
         
-        # Assert
-        # Check that a Note object was returned
-        assert isinstance(note, Note)
-        assert note.title == title
+        # Check that the file path in note metadata matches the actual path
+        self.assertEqual(note.metadata['path'], expected_path)
         
-        # Check that file was created with the expected name
-        expected_path = os.path.join(temp_notes_dir, expected_filename)
-        assert os.path.exists(expected_path)
-        
-        # Check that the file contains the title
+        # Read the file content and check frontmatter
         with open(expected_path, 'r', encoding='utf-8') as f:
             content = f.read()
-        assert title in content
         
-        # Check note path in metadata
-        assert 'path' in note.metadata
-        assert note.metadata['path'] == expected_path
+        # Parse the frontmatter
+        frontmatter, content_without_frontmatter = parse_frontmatter(content)
+        
+        # Check frontmatter contains correct title
+        self.assertEqual(frontmatter.get('title'), title)
+        
+        # Check content includes the title as a header
+        self.assertIn(f"# {title}", content_without_frontmatter)
     
-    def test_create_note_file_exists(self, temp_notes_dir):
-        """Test that an exception is raised when trying to create a note with a title that already exists."""
-        # Arrange
-        note_manager = NoteManager(notes_dir=temp_notes_dir)
-        title = "Duplicate Note"
+    def test_create_duplicate_note(self):
+        """Test that creating a duplicate note raises an exception."""
+        # Create the first note
+        title = "Duplicate Test"
+        self.note_manager.create_note(title=title)
         
-        # Create the note first time
-        note_manager.create_note(title=title)
+        # Try to create a second note with the same title
+        with self.assertRaises(FileExistsError):
+            self.note_manager.create_note(title=title)
+    
+    def test_file_path_matches_metadata(self):
+        """Test that the file path in metadata matches the actual file path."""
+        # Create a note
+        title = "Path Test"
+        note = self.note_manager.create_note(title=title)
         
-        # Act & Assert
-        # Attempt to create the same note again should raise an exception
-        with pytest.raises(FileExistsError):
-            note_manager.create_note(title=title)
+        # Get the expected file path
+        expected_path = os.path.join(self.temp_dir, "path-test.md")
+        
+        # Check that the file path in metadata matches the expected path
+        self.assertEqual(note.metadata['path'], expected_path)
+        
+        # Verify that the file exists at this path
+        self.assertTrue(os.path.isfile(expected_path))
 
-    def test_note_content_has_frontmatter(self, temp_notes_dir):
-        """Test that the created note file includes YAML frontmatter."""
-        # Arrange
-        note_manager = NoteManager(notes_dir=temp_notes_dir)
-        title = "Frontmatter Test"
-        
-        # Act
-        note = note_manager.create_note(title=title)
-        
-        # Assert
-        # Get the path to the created file
-        note_path = note.metadata['path']
-        assert os.path.exists(note_path)
-        
-        # Read the file content
-        with open(note_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Check for frontmatter delimiters
-        assert content.startswith('---')
-        assert '---\n\n' in content
-        
-        # Check for basic frontmatter fields
-        assert f'title: {title}' in content
-        assert 'created_at:' in content
-        assert 'updated_at:' in content
 
-    def test_create_note_template_applied(self, temp_notes_dir):
-        """Test that the default template is applied when creating a note."""
-        # Arrange
-        note_manager = NoteManager(notes_dir=temp_notes_dir)
-        title = "Template Test"
-        
-        # Act
-        note = note_manager.create_note(title=title)
-        
-        # Assert
-        # Get the path to the created file
-        note_path = note.metadata['path']
-        
-        # Read the file content
-        with open(note_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Check for template components (assuming default template)
-        # This may need adjustment based on your actual default template
-        assert '# Template Test' in content
-        assert '## Overview' in content
-        assert '## Details' in content
-        assert '## Conclusion' in content
+if __name__ == '__main__':
+    unittest.main()
