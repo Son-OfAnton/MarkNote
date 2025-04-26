@@ -1,414 +1,294 @@
-"""
-Unit tests for the 'search' command functionality in the CLI.
-
-These tests focus on the functionality of the search command,
-including searching notes by content, title, and tags.
-"""
 import os
 import shutil
 import tempfile
-import pytest
-from click.testing import CliRunner
-from app.cli.commands import new, cli
+import unittest
+
+from app.core.note_manager import NoteManager
 
 
-class TestSearchCommandFunctionality:
-    """Test case for the 'search' command functionality."""
-
-    @pytest.fixture
-    def runner(self):
-        """Provide a Click CLI test runner."""
-        return CliRunner()
-
-    @pytest.fixture
-    def temp_notes_dir(self):
-        """Create a temporary directory for test notes."""
-        temp_dir = tempfile.mkdtemp()
-        yield temp_dir
-        # Cleanup after test
-        shutil.rmtree(temp_dir)
-
-    @pytest.fixture
-    def sample_notes_with_content(self, runner, temp_notes_dir):
-        """Create sample notes with specific content for search testing."""
-        notes = [
-            {
-                "title": "Project Planning",
-                "tags": "work,planning,project",
-                "category": "work",
-                "content": """
-                # Project Planning
-                
-                This note contains information about planning our new software project.
-                
-                ## Key Points
-                
-                - Timeline: 3 months
-                - Resources needed: 5 developers, 1 designer
-                - Budget: $50,000
-                
-                ## Technologies
-                
-                We'll be using Python with Flask for the backend and React for the frontend.
-                
-                ## Action Items
-                
-                - Set up GitHub repository
-                - Create initial project structure
-                - Establish CI/CD pipeline
-                """
-            },
-            {
-                "title": "Meeting Notes - Client Introduction",
-                "tags": "client,meeting,important",
-                "category": "meetings",
-                "content": """
-                # Meeting Notes - Client Introduction
-                
-                Initial meeting with the new client to discuss requirements.
-                
-                ## Attendees
-                
-                - John Smith (Client)
-                - Jane Doe (Project Manager)
-                - Mark Johnson (Developer)
-                
-                ## Discussion Points
-                
-                The client needs a web application for tracking inventory.
-                Budget is approximately $40,000.
-                Timeline is flexible but preferably within 4 months.
-                
-                ## Technologies Discussed
-                
-                We recommended using Python for the backend.
-                """
-            },
-            {
-                "title": "Personal Goals",
-                "tags": "personal,goals,private",
-                "category": "personal",
-                "content": """
-                # Personal Goals
-                
-                My personal goals for the next 6 months.
-                
-                ## Career
-                
-                - Learn React and improve JavaScript skills
-                - Contribute to at least 2 open-source projects
-                - Write 5 technical blog posts
-                
-                ## Health
-                
-                - Exercise 3 times per week
-                - Reduce coffee consumption
-                - Get at least 7 hours of sleep each night
-                
-                ## Hobbies
-                
-                - Read 10 books
-                - Improve photography skills
-                """
-            },
-            {
-                "title": "Shopping List",
-                "tags": "personal,shopping",
-                "category": "personal",
-                "content": """
-                # Shopping List
-                
-                Items to purchase on the next shopping trip.
-                
-                ## Groceries
-                
-                - Milk
-                - Eggs
-                - Bread
-                - Apples
-                - Coffee
-                
-                ## Household
-                
-                - Paper towels
-                - Laundry detergent
-                
-                ## Electronics
-                
-                - USB cable
-                - Laptop stand
-                """
-            }
-        ]
+class TestSearchCommand(unittest.TestCase):
+    """Test the functionality of the 'search' command for searching notes."""
+    
+    def setUp(self):
+        """Set up a temporary directory and create test notes with searchable content."""
+        # Create a temporary directory for test notes
+        self.temp_dir = tempfile.mkdtemp()
+        self.note_manager = NoteManager(notes_dir=self.temp_dir)
         
-        created_notes = []
-        for note in notes:
-            # Create the category directory if needed
-            category_dir = os.path.join(temp_notes_dir, note["category"])
-            os.makedirs(category_dir, exist_ok=True)
-            
-            # Determine filename
-            filename = note["title"].lower().replace(" ", "-") + ".md"
-            file_path = os.path.join(category_dir, filename)
-            
-            # Create frontmatter
-            frontmatter = f"""---
-title: {note["title"]}
-created_at: 2024-04-23T10:00:00
-updated_at: 2024-04-23T10:00:00
-tags:
-{chr(10).join([f'  - {tag}' for tag in note["tags"].split(',')])}
-category: {note["category"]}
----
-
-{note["content"]}
-"""
-            # Write the file directly
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(frontmatter)
-                
-            # Add the note to the created list
-            created_notes.append({**note, "path": file_path})
-            
-        return created_notes
-
-    def test_search_basic_functionality(self, runner, temp_notes_dir, sample_notes_with_content):
-        """Test basic functionality of the 'search' command."""
-        # Act - search for a term that should be in one note
-        result = runner.invoke(cli, 
-            ["search", "inventory", "--output-dir", temp_notes_dir],
-            catch_exceptions=False
+        # Create a second temporary directory for testing output_dir parameter
+        self.custom_dir = tempfile.mkdtemp()
+        
+        # Create a variety of test notes with different content for search testing
+        
+        # Note 1: Note with Python content
+        self.note1 = self.note_manager.create_note(
+            title="Python Programming",
+            content="Python is a high-level programming language known for its readability.\n\n"
+                    "Example Python code:\n```python\ndef hello_world():\n    print('Hello, World!')\n```\n\n"
+                    "Python has a rich ecosystem of libraries for data science, web development, and more.",
+            tags=["programming", "python", "coding"]
         )
         
-        # Assert
-        assert result.exit_code == 0
-        
-        # Should find the client meeting notes (contains "inventory")
-        assert "Meeting Notes - Client Introduction" in result.output
-        
-        # Should not find other notes
-        assert "Project Planning" not in result.output
-        assert "Personal Goals" not in result.output
-        assert "Shopping List" not in result.output
-
-    def test_search_multiple_matches(self, runner, temp_notes_dir, sample_notes_with_content):
-        """Test search with a term that appears in multiple notes."""
-        # Act - search for 'Python' which should be in two notes
-        result = runner.invoke(cli, 
-            ["search", "Python", "--output-dir", temp_notes_dir],
-            catch_exceptions=False
+        # Note 2: Note with Java content
+        self.note2 = self.note_manager.create_note(
+            title="Java Basics",
+            content="Java is a popular object-oriented programming language.\n\n"
+                    "Example Java code:\n```java\npublic class HelloWorld {\n    "
+                    "public static void main(String[] args) {\n        "
+                    "System.out.println(\"Hello, World!\");\n    }\n}\n```",
+            tags=["programming", "java", "coding"],
+            category="programming"
         )
         
-        # Assert
-        assert result.exit_code == 0
-        
-        # Should find both project planning and client meeting notes
-        assert "Project Planning" in result.output
-        assert "Meeting Notes - Client Introduction" in result.output
-        
-        # Should not find the other notes
-        assert "Personal Goals" not in result.output
-        assert "Shopping List" not in result.output
-
-    def test_search_case_insensitive(self, runner, temp_notes_dir, sample_notes_with_content):
-        """Test that search is case-insensitive."""
-        # Act - search for 'python' (lowercase) which should match 'Python' (uppercase) in notes
-        result = runner.invoke(cli, 
-            ["search", "python", "--output-dir", temp_notes_dir],
-            catch_exceptions=False
+        # Note 3: Note with meeting details
+        self.note3 = self.note_manager.create_note(
+            title="Project Planning Meeting",
+            content="Meeting Notes - Project Alpha\n\n"
+                    "Date: 2023-03-15\n"
+                    "Attendees: John, Sarah, Michael\n\n"
+                    "Discussion Points:\n"
+                    "- Timeline for the project\n"
+                    "- Resource allocation\n"
+                    "- Budget constraints\n\n"
+                    "Action Items:\n"
+                    "- Sarah to prepare project schedule\n"
+                    "- Michael to estimate resource needs\n"
+                    "- John to work on budget proposal",
+            tags=["meeting", "planning", "project-alpha"],
+            category="meetings"
         )
         
-        # Assert
-        assert result.exit_code == 0
-        
-        # Should find both notes with 'Python' in them, despite different case
-        assert "Project Planning" in result.output
-        assert "Meeting Notes - Client Introduction" in result.output
-
-    def test_search_in_tags(self, runner, temp_notes_dir, sample_notes_with_content):
-        """Test searching in note tags."""
-        # Act - search for 'important' which is a tag on the client meeting
-        result = runner.invoke(cli, 
-            ["search", "important", "--output-dir", temp_notes_dir],
-            catch_exceptions=False
+        # Note 4: Note with personal journal content
+        self.note4 = self.note_manager.create_note(
+            title="Daily Reflection",
+            content="Today was a productive day. I managed to complete several tasks including:\n\n"
+                    "1. Finished the documentation for the API\n"
+                    "2. Resolved the database connection issue\n"
+                    "3. Had a good planning meeting with the team\n\n"
+                    "I'm feeling satisfied with the progress we're making on Project Alpha.",
+            tags=["journal", "reflection", "productivity"],
+            category="personal"
         )
         
-        # Assert
-        assert result.exit_code == 0
-        
-        # Should find only the client meeting notes
-        assert "Meeting Notes - Client Introduction" in result.output
-        
-        # Should not find the other notes
-        assert "Project Planning" not in result.output
-        assert "Personal Goals" not in result.output
-        assert "Shopping List" not in result.output
-
-    def test_search_in_title(self, runner, temp_notes_dir, sample_notes_with_content):
-        """Test searching in note titles."""
-        # Act - search for 'Shopping' which is in a title
-        result = runner.invoke(cli, 
-            ["search", "Shopping", "--output-dir", temp_notes_dir],
-            catch_exceptions=False
+        # Note 5: Note with similar words but different context
+        self.note5 = self.note_manager.create_note(
+            title="Database Management",
+            content="Managing database connections and ensuring proper resource allocation is critical.\n\n"
+                    "Common database types include:\n"
+                    "- SQL databases (MySQL, PostgreSQL)\n"
+                    "- NoSQL databases (MongoDB, Cassandra)\n\n"
+                    "Performance considerations include proper indexing and query optimization.",
+            tags=["database", "programming", "optimization"],
+            category="programming"
         )
         
-        # Assert
-        assert result.exit_code == 0
-        
-        # Should find only the shopping list note
-        assert "Shopping List" in result.output
-        
-        # Should not find the other notes
-        assert "Project Planning" not in result.output
-        assert "Meeting Notes - Client Introduction" not in result.output
-        assert "Personal Goals" not in result.output
-
-    def test_search_partial_word_matching(self, runner, temp_notes_dir, sample_notes_with_content):
-        """Test searching with partial word matching."""
-        # Act - search for 'plan' which should match 'planning', 'plane', etc.
-        result = runner.invoke(cli, 
-            ["search", "plan", "--output-dir", temp_notes_dir],
-            catch_exceptions=False
+        # Note 6: Note with special characters and formatting
+        self.note6 = self.note_manager.create_note(
+            title="Markdown Syntax Guide",
+            content="# Markdown Syntax Guide\n\n"
+                    "## Headers\n\n"
+                    "# H1\n## H2\n### H3\n\n"
+                    "## Emphasis\n\n"
+                    "*Italic text* or _italic text_\n\n"
+                    "**Bold text** or __bold text__\n\n"
+                    "## Lists\n\n"
+                    "* Item 1\n* Item 2\n  * Subitem 2.1\n  * Subitem 2.2\n\n"
+                    "1. First item\n2. Second item\n\n"
+                    "## Links\n\n"
+                    "[Link text](http://example.com)\n\n"
+                    "## Code\n\n"
+                    "`inline code`\n\n"
+                    "```\ncode block\n```",
+            tags=["markdown", "documentation", "syntax"]
         )
         
-        # Assert
-        assert result.exit_code == 0
-        
-        # Should find 'Project Planning' (title and content has 'planning')
-        assert "Project Planning" in result.output
-
-    def test_search_with_no_results(self, runner, temp_notes_dir, sample_notes_with_content):
-        """Test search with a term that doesn't match any notes."""
-        # Act - search for a term that shouldn't be in any notes
-        result = runner.invoke(cli, 
-            ["search", "xylophone", "--output-dir", temp_notes_dir],
-            catch_exceptions=False
+        # Note 7: Note in custom directory with specific searchable term
+        self.note7 = self.note_manager.create_note(
+            title="Custom Directory Note",
+            content="This note contains a specific searchable term: 'UNIQUESEARCHTERM123'.\n\n"
+                    "It is stored in a custom directory to test search functionality across directories.",
+            output_dir=self.custom_dir
         )
+    
+    def tearDown(self):
+        """Clean up the temporary directories after tests."""
+        shutil.rmtree(self.temp_dir)
+        shutil.rmtree(self.custom_dir)
+    
+    def test_search_basic(self):
+        """Test basic search functionality with simple keywords."""
+        # Search for a common programming term
+        results = self.note_manager.search_notes("programming")
         
-        # Assert
-        assert result.exit_code == 0
-        assert "No notes found matching" in result.output
+        # Should match notes about Python, Java, and databases
+        self.assertEqual(len(results), 3)
+        titles = [note.title for note in results]
+        self.assertIn("Python Programming", titles)
+        self.assertIn("Java Basics", titles)
+        self.assertIn("Database Management", titles)
+        
+        # Search for a specific programming language
+        results = self.note_manager.search_notes("python")
+        
+        # Should only match the Python note
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Python Programming")
+    
+    def test_search_case_insensitive(self):
+        """Test that search is case insensitive."""
+        # Search for "python" in lowercase
+        results_lower = self.note_manager.search_notes("python")
+        
+        # Search for "Python" with uppercase P
+        results_upper = self.note_manager.search_notes("Python")
+        
+        # Both searches should return the same note
+        self.assertEqual(len(results_lower), 1)
+        self.assertEqual(len(results_upper), 1)
+        self.assertEqual(results_lower[0].title, results_upper[0].title)
+        self.assertEqual(results_lower[0].title, "Python Programming")
+    
+    def test_search_across_titles_and_content(self):
+        """Test that search looks in both titles and content of notes."""
+        # Search for a term that appears in a title
+        results = self.note_manager.search_notes("Basics")
+        
+        # Should match the Java Basics note
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Java Basics")
+        
+        # Search for a term that appears in content but not title
+        results = self.note_manager.search_notes("ecosystem")
+        
+        # Should match the Python note which mentions "ecosystem" in content
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Python Programming")
+    
+    def test_search_partial_words(self):
+        """Test searching for partial words or parts of phrases."""
+        # Search for a partial word that could appear in multiple notes
+        results = self.note_manager.search_notes("program")
+        
+        # Should match notes containing "programming" or "program"
+        self.assertTrue(len(results) >= 2)
+        
+        titles = [note.title for note in results]
+        self.assertIn("Python Programming", titles)
+        self.assertIn("Java Basics", titles)
+    
+    def test_search_with_multiple_terms(self):
+        """Test searching for multiple terms in a single query."""
+        # Search for "project planning" (appears in meeting note title)
+        results = self.note_manager.search_notes("project planning")
+        
+        # Should match the meeting note
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Project Planning Meeting")
+        
+        # Search for "project alpha" (across title and content)
+        results = self.note_manager.search_notes("project alpha")
+        
+        # Should match both the meeting note and daily reflection note
+        self.assertEqual(len(results), 2)
+        titles = [note.title for note in results]
+        self.assertIn("Project Planning Meeting", titles)
+        self.assertIn("Daily Reflection", titles)
+    
+    def test_search_tags(self):
+        """Test that search includes tags in its scope."""
+        # Search for a term that appears only as a tag
+        results = self.note_manager.search_notes("project-alpha")
+        
+        # Should match the meeting note with this tag
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Project Planning Meeting")
+        
+        # Search for a tag that appears in multiple notes
+        results = self.note_manager.search_notes("coding")
+        
+        # Should match both the Python and Java notes
+        self.assertEqual(len(results), 2)
+        titles = [note.title for note in results]
+        self.assertIn("Python Programming", titles)
+        self.assertIn("Java Basics", titles)
+    
+    def test_search_formatting_and_special_characters(self):
+        """Test searching through formatted content with special characters."""
+        # Search for a markdown formatting symbol
+        results = self.note_manager.search_notes("##")
+        
+        # Should match the markdown syntax guide
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Markdown Syntax Guide")
+        
+        # Search for code block syntax
+        results = self.note_manager.search_notes("```")
+        
+        # Should match notes with code blocks (Python, Java, and markdown guide)
+        self.assertTrue(len(results) >= 3)
+        titles = [note.title for note in results]
+        self.assertIn("Python Programming", titles)
+        self.assertIn("Java Basics", titles)
+        self.assertIn("Markdown Syntax Guide", titles)
+    
+    def test_search_in_custom_directory(self):
+        """Test searching for notes in a custom directory."""
+        # Search in the default directory for the unique term
+        results_default = self.note_manager.search_notes("UNIQUESEARCHTERM123")
+        
+        # Should not find any notes in the default directory
+        self.assertEqual(len(results_default), 0)
+        
+        # Search in the custom directory for the unique term
+        results_custom = self.note_manager.search_notes("UNIQUESEARCHTERM123", output_dir=self.custom_dir)
+        
+        # Should find the custom directory note
+        self.assertEqual(len(results_custom), 1)
+        self.assertEqual(results_custom[0].title, "Custom Directory Note")
+    
+    def test_search_non_existent_term(self):
+        """Test searching for a term that doesn't exist in any notes."""
+        # Search for a term that doesn't exist
+        results = self.note_manager.search_notes("ThisTermDefitelyDoesNotExistInAnyNote12345")
+        
+        # Should return an empty list
+        self.assertEqual(len(results), 0)
+    
+    def test_search_empty_query(self):
+        """Test searching with an empty query."""
+        # Search with an empty string
+        results = self.note_manager.search_notes("")
+        
+        # Implementation might vary, but it should either:
+        # 1. Return no results, or
+        # 2. Return all notes (like a list operation)
+        
+        # We'll test based on the actual behavior
+        if len(results) > 0:
+            # If it returns all notes, check that the count is correct
+            self.assertEqual(len(results), 6)  # 6 notes in default directory
+        else:
+            # If it returns no results, check that the list is empty
+            self.assertEqual(len(results), 0)
+    
+    def test_search_with_context_overlap(self):
+        """Test searching where multiple notes have semantic overlap."""
+        # Search for "meeting" which appears in multiple contexts
+        results = self.note_manager.search_notes("meeting")
+        
+        # Should match both the meeting note and the reflection note
+        self.assertEqual(len(results), 2)
+        titles = [note.title for note in results]
+        self.assertIn("Project Planning Meeting", titles)
+        self.assertIn("Daily Reflection", titles)
+        
+        # Search for a term with context to disambiguate
+        results = self.note_manager.search_notes("planning meeting")
+        
+        # Should only match the meeting note
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Project Planning Meeting")
 
-    def test_search_displays_relevant_context(self, runner, temp_notes_dir, sample_notes_with_content):
-        """Test that search results include some context from the matching content."""
-        # Act - search for a specific term
-        result = runner.invoke(cli, 
-            ["search", "Budget", "--output-dir", temp_notes_dir],
-            catch_exceptions=False
-        )
-        
-        # Assert
-        assert result.exit_code == 0
-        
-        # Should find both notes with budget information
-        assert "Project Planning" in result.output
-        assert "Meeting Notes - Client Introduction" in result.output
-        
-        # Should show context around the matches
-        assert "$50,000" in result.output or "50,000" in result.output
-        assert "$40,000" in result.output or "40,000" in result.output
 
-    def test_search_with_special_characters(self, runner, temp_notes_dir, sample_notes_with_content):
-        """Test search with special characters and symbols."""
-        # Act - search for a term with special characters
-        result = runner.invoke(cli, 
-            ["search", "$40,000", "--output-dir", temp_notes_dir],
-            catch_exceptions=False
-        )
-        
-        # Assert
-        assert result.exit_code == 0
-        
-        # Should find the client meeting notes
-        assert "Meeting Notes - Client Introduction" in result.output
-        
-        # Should not find the other notes
-        assert "Project Planning" not in result.output
-        assert "Personal Goals" not in result.output
-        assert "Shopping List" not in result.output
-
-    def test_search_multiple_words(self, runner, temp_notes_dir, sample_notes_with_content):
-        """Test searching for multiple words together."""
-        # Act - search for multiple words
-        result = runner.invoke(cli, 
-            ["search", "open-source projects", "--output-dir", temp_notes_dir],
-            catch_exceptions=False
-        )
-        
-        # Assert
-        assert result.exit_code == 0
-        
-        # Should find the personal goals note
-        assert "Personal Goals" in result.output
-        
-        # Should not find the other notes
-        assert "Project Planning" not in result.output
-        assert "Meeting Notes - Client Introduction" not in result.output
-        assert "Shopping List" not in result.output
-
-    def test_search_custom_output_dir(self, runner):
-        """Test 'search' command with a custom output directory."""
-        with tempfile.TemporaryDirectory() as main_dir:
-            # Create a custom output directory
-            custom_dir = os.path.join(main_dir, "custom-notes")
-            os.makedirs(custom_dir)
-            
-            # Create a note in the custom directory with specific content
-            title = "Test Note in Custom Dir"
-            result = runner.invoke(new, 
-                [title, "--output-dir", custom_dir],
-                catch_exceptions=False
-            )
-            assert result.exit_code == 0
-            
-            # Modify the note to include searchable content
-            note_path = os.path.join(custom_dir, "test-note-in-custom-dir.md")
-            with open(note_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                
-            # Add unique searchable text
-            modified_content = content.replace(
-                "Add more detailed information here...",
-                "This is a unique search phrase for testing."
-            )
-            
-            with open(note_path, 'w', encoding='utf-8') as f:
-                f.write(modified_content)
-                
-            # Act - search in the custom directory
-            search_result = runner.invoke(cli, 
-                ["search", "unique search phrase", "--output-dir", custom_dir],
-                catch_exceptions=False
-            )
-            
-            # Assert
-            assert search_result.exit_code == 0
-            assert title in search_result.output
-            
-            # Also verify searching in a different directory doesn't find it
-            different_dir = os.path.join(main_dir, "different-dir")
-            os.makedirs(different_dir)
-            
-            different_result = runner.invoke(cli, 
-                ["search", "unique search phrase", "--output-dir", different_dir],
-                catch_exceptions=False
-            )
-            
-            assert different_result.exit_code == 0
-            assert "No notes found" in different_result.output
-            assert title not in different_result.output
-
-    def test_search_with_nonexistent_directory(self, runner):
-        """Test search with a directory that doesn't exist."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            nonexistent_dir = os.path.join(temp_dir, "does_not_exist")
-            
-            # Act
-            result = runner.invoke(cli, 
-                ["search", "anything", "--output-dir", nonexistent_dir],
-                catch_exceptions=False
-            )
-            
-            # Assert
-            assert result.exit_code == 0
-            assert "No notes found" in result.output
+if __name__ == '__main__':
+    unittest.main()

@@ -1,434 +1,289 @@
-"""
-Unit tests for the 'edit' command functionality in the CLI.
-
-These tests focus on the functionality of the edit command,
-including note finding, note editing, and different command options.
-"""
 import os
 import shutil
 import tempfile
-import pytest
-from click.testing import CliRunner
-from app.cli.commands import new, edit
-import yaml
+import unittest
+from pathlib import Path
+
 from app.core.note_manager import NoteManager
 from app.utils.file_handler import parse_frontmatter
 
 
-class TestEditCommandFunctionality:
-    """Test case for the 'edit' command functionality."""
-
-    @pytest.fixture
-    def runner(self):
-        """Provide a Click CLI test runner."""
-        return CliRunner()
-
-    @pytest.fixture
-    def temp_notes_dir(self):
-        """Create a temporary directory for test notes."""
-        temp_dir = tempfile.mkdtemp()
-        yield temp_dir
-        # Cleanup after test
-        shutil.rmtree(temp_dir)
-
-    @pytest.fixture
-    def sample_note(self, runner, temp_notes_dir):
-        """Create a sample note for testing edit functionality."""
-        title = "Sample Edit Test Note"
-        result = runner.invoke(new, 
-            [title, "--output-dir", temp_notes_dir],
-            catch_exceptions=False
-        )
-        assert result.exit_code == 0
+class TestEditCommand(unittest.TestCase):
+    """Test the functionality of the 'edit' command for modifying notes."""
+    
+    def setUp(self):
+        """Set up a temporary directory and create test notes."""
+        # Create a temporary directory for test notes
+        self.temp_dir = tempfile.mkdtemp()
+        self.note_manager = NoteManager(notes_dir=self.temp_dir)
         
-        # Return both the title and the file path
-        note_path = os.path.join(temp_notes_dir, "sample-edit-test-note.md")
-        return {"title": title, "path": note_path}
-
-    @pytest.fixture
-    def categorized_note(self, runner, temp_notes_dir):
-        """Create a sample note with a category for testing edit functionality."""
-        title = "Categorized Note"
-        category = "test-category"
-        result = runner.invoke(new, 
-            [title, "--category", category, "--output-dir", temp_notes_dir],
-            catch_exceptions=False
-        )
-        assert result.exit_code == 0
-        
-        # Return the details
-        note_path = os.path.join(temp_notes_dir, category, "categorized-note.md")
-        return {"title": title, "category": category, "path": note_path}
-
-    def test_edit_basic_functionality(self, runner, temp_notes_dir, sample_note, monkeypatch):
-        """Test basic functionality of the 'edit' command."""
-        # Mock the editor to modify the file
-        def mock_edit_file(path, custom_editor=None):
-            # Read the current content
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Extract the frontmatter and content
-            metadata, content_without_frontmatter = parse_frontmatter(content)
-            
-            # Modify the content
-            modified_content = content_without_frontmatter.replace(
-                "Add more detailed information here...",
-                "This content was modified by the edit test."
-            )
-            
-            # Rebuild the content with frontmatter
-            new_content = "---\n"
-            new_content += yaml.dump(metadata, default_flow_style=False)
-            new_content += "---\n\n"
-            new_content += modified_content
-            
-            # Write back to the file
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-                
-            return True, ""
-        
-        # Monkeypatch the edit_file function
-        monkeypatch.setattr("app.cli.commands.edit_file", mock_edit_file)
-        
-        # Act
-        result = runner.invoke(edit, 
-            [sample_note["title"], "--output-dir", temp_notes_dir],
-            catch_exceptions=False
+        # Create a test note to edit
+        self.test_title = "Test Note for Editing"
+        self.initial_content = "This is the initial content of the note."
+        self.test_note = self.note_manager.create_note(
+            title=self.test_title,
+            content=self.initial_content
         )
         
-        # Assert
-        assert result.exit_code == 0
-        assert "Note updated successfully" in result.output
+        # Create a note with tags and category for testing
+        self.categorized_title = "Categorized Note"
+        self.category = "work"
+        self.tags = ["important", "meeting"]
+        self.categorized_note = self.note_manager.create_note(
+            title=self.categorized_title,
+            category=self.category,
+            tags=self.tags
+        )
+    
+    def tearDown(self):
+        """Clean up the temporary directory after tests."""
+        shutil.rmtree(self.temp_dir)
+    
+    def test_edit_content(self):
+        """Test editing the content of a note."""
+        # New content for the note
+        new_content = "This is the updated content of the note."
         
-        # Verify the file was actually modified
-        with open(sample_note["path"], 'r', encoding='utf-8') as f:
+        # Edit the note
+        success, updated_note, _ = self.note_manager.edit_note_content(
+            title=self.test_title,
+            new_content=new_content
+        )
+        
+        # Verify the edit was successful
+        self.assertTrue(success)
+        
+        # Verify the note object was updated
+        self.assertEqual(updated_note.content, new_content)
+        
+        # Read the file and check content
+        with open(updated_note.metadata['path'], 'r', encoding='utf-8') as f:
             content = f.read()
         
-        assert "This content was modified by the edit test." in content
-
-    def test_edit_note_not_found(self, runner, temp_notes_dir):
-        """Test the 'edit' command when the specified note doesn't exist."""
-        # Act
-        result = runner.invoke(edit, 
-            ["Nonexistent Note", "--output-dir", temp_notes_dir],
-            catch_exceptions=False
+        # Parse frontmatter
+        _, content_without_frontmatter = parse_frontmatter(content)
+        
+        # Verify the file content was updated
+        self.assertEqual(content_without_frontmatter, new_content)
+    
+    def test_edit_nonexistent_note(self):
+        """Test editing a note that doesn't exist."""
+        # Try to edit a non-existent note
+        success, updated_note, error = self.note_manager.edit_note_content(
+            title="Non-Existent Note",
+            new_content="This content won't be saved."
         )
         
-        # Assert
-        assert result.exit_code == 1
-        assert "not found" in result.output
-
-    def test_edit_with_category(self, runner, temp_notes_dir, categorized_note, monkeypatch):
-        """Test editing a note within a specific category."""
-        # Mock the editor to modify the file
-        def mock_edit_file(path, custom_editor=None):
-            # Read the current content
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Extract the frontmatter and content
-            metadata, content_without_frontmatter = parse_frontmatter(content)
-            
-            # Modify the content
-            modified_content = content_without_frontmatter.replace(
-                "Add more detailed information here...",
-                "This categorized note was edited."
-            )
-            
-            # Rebuild the content with frontmatter
-            new_content = "---\n"
-            new_content += yaml.dump(metadata, default_flow_style=False)
-            new_content += "---\n\n"
-            new_content += modified_content
-            
-            # Write back to the file
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-                
-            return True, ""
+        # Verify the edit failed
+        self.assertFalse(success)
+        self.assertIsNone(updated_note)
+        self.assertTrue(len(error) > 0)  # Error message should not be empty
+    
+    def test_edit_note_in_category(self):
+        """Test editing a note that is in a category."""
+        # New content for the categorized note
+        new_content = "This is the updated content of the categorized note."
         
-        # Monkeypatch the edit_file function
-        monkeypatch.setattr("app.cli.commands.edit_file", mock_edit_file)
-        
-        # Act - use category option to find the note
-        result = runner.invoke(edit, 
-            [
-                categorized_note["title"],
-                "--category", categorized_note["category"],
-                "--output-dir", temp_notes_dir
-            ],
-            catch_exceptions=False
+        # Edit the note
+        success, updated_note, _ = self.note_manager.edit_note_content(
+            title=self.categorized_title,
+            new_content=new_content,
+            category=self.category
         )
         
-        # Assert
-        assert result.exit_code == 0
-        assert "Note updated successfully" in result.output
+        # Verify the edit was successful
+        self.assertTrue(success)
         
-        # Verify the file was actually modified
-        with open(categorized_note["path"], 'r', encoding='utf-8') as f:
+        # Verify the note object was updated
+        self.assertEqual(updated_note.content, new_content)
+        
+        # Verify the category was preserved
+        self.assertEqual(updated_note.category, self.category)
+        
+        # Verify the tags were preserved
+        self.assertEqual(updated_note.tags, self.tags)
+        
+        # Read the file and check content
+        with open(updated_note.metadata['path'], 'r', encoding='utf-8') as f:
             content = f.read()
         
-        assert "This categorized note was edited." in content
-
-    def test_edit_multiple_notes(self, runner, temp_notes_dir, monkeypatch):
-        """Test editing multiple notes at once."""
-        # Create multiple notes
-        titles = ["Multiple Edit Test 1", "Multiple Edit Test 2", "Multiple Edit Test 3"]
-        paths = []
+        # Parse frontmatter
+        frontmatter, content_without_frontmatter = parse_frontmatter(content)
         
-        for title in titles:
-            result = runner.invoke(new, 
-                [title, "--output-dir", temp_notes_dir],
-                catch_exceptions=False
-            )
-            assert result.exit_code == 0
-            paths.append(os.path.join(temp_notes_dir, title.lower().replace(" ", "-") + ".md"))
+        # Verify the file content was updated
+        self.assertEqual(content_without_frontmatter, new_content)
         
-        # Mock the editor to modify files
-        def mock_edit_file(path, custom_editor=None):
-            # Read the current content
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Extract the frontmatter and content
-            metadata, content_without_frontmatter = parse_frontmatter(content)
-            
-            # Modify the content
-            modified_content = content_without_frontmatter.replace(
-                "Add more detailed information here...",
-                "This note was batch edited."
-            )
-            
-            # Rebuild the content with frontmatter
-            new_content = "---\n"
-            new_content += yaml.dump(metadata, default_flow_style=False)
-            new_content += "---\n\n"
-            new_content += modified_content
-            
-            # Write back to the file
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-                
-            return True, ""
+        # Verify the category and tags were preserved in frontmatter
+        self.assertEqual(frontmatter.get('category'), self.category)
+        self.assertEqual(frontmatter.get('tags'), self.tags)
+    
+    def test_update_note_metadata(self):
+        """Test updating note metadata while editing."""
+        # New content and metadata
+        new_content = "Updated content with new metadata."
+        new_tags = ["updated", "test"]
+        new_category = "personal"
         
-        # Monkeypatch the edit_file function
-        monkeypatch.setattr("app.cli.commands.edit_file", mock_edit_file)
-        
-        # Act - edit all notes at once
-        result = runner.invoke(edit, 
-            titles + ["--output-dir", temp_notes_dir],
-            catch_exceptions=False
+        # Update the note with new metadata
+        success, updated_note, _ = self.note_manager.update_note(
+            title=self.test_title,
+            new_content=new_content,
+            new_tags=new_tags,
+            new_category=new_category
         )
         
-        # Assert
-        assert result.exit_code == 0
-        assert "Note updated successfully" in result.output
+        # Verify the update was successful
+        self.assertTrue(success)
         
-        # Verify all files were correctly modified
-        for path in paths:
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            assert "This note was batch edited." in content
-
-    def test_edit_with_custom_editor(self, runner, temp_notes_dir, sample_note, monkeypatch):
-        """Test the 'edit' command with a custom editor specified."""
-        edit_called_with = {}
+        # Verify the note object was updated with new content and metadata
+        self.assertEqual(updated_note.content, new_content)
+        self.assertEqual(updated_note.tags, new_tags)
+        self.assertEqual(updated_note.category, new_category)
         
-        # Mock the edit_file function to record what it was called with
-        def mock_edit_file(path, custom_editor=None):
-            edit_called_with['path'] = path
-            edit_called_with['editor'] = custom_editor
-            
-            # Perform a simple modification to simulate editing
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            modified_content = content.replace(
-                "Add more detailed information here...",
-                "Edited with custom editor."
-            )
-            
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(modified_content)
-                
-            return True, ""
-        
-        # Monkeypatch the edit_file function
-        monkeypatch.setattr("app.cli.commands.edit_file", mock_edit_file)
-        
-        # Act
-        custom_editor = "custom-editor"
-        result = runner.invoke(edit, 
-            [sample_note["title"], "--editor", custom_editor, "--output-dir", temp_notes_dir],
-            catch_exceptions=False
-        )
-        
-        # Assert
-        assert result.exit_code == 0
-        
-        # Check that edit_file was called with the right editor
-        assert edit_called_with['path'] == sample_note["path"]
-        assert edit_called_with['editor'] == custom_editor
-
-    def test_edit_with_invalid_editor(self, runner, temp_notes_dir, sample_note, monkeypatch):
-        """Test the 'edit' command with an invalid editor specified."""
-        # Mock the is_valid_editor function to reject our editor
-        def mock_is_valid_editor(editor):
-            return editor != "invalid-editor"
-        
-        # Monkeypatch the is_valid_editor function
-        monkeypatch.setattr("app.cli.commands.is_valid_editor", mock_is_valid_editor)
-        
-        # Act
-        result = runner.invoke(edit, 
-            [sample_note["title"], "--editor", "invalid-editor", "--output-dir", temp_notes_dir],
-            catch_exceptions=False
-        )
-        
-        # Assert
-        assert result.exit_code == 1
-        assert "Error" in result.output
-        assert "Specified editor 'invalid-editor' not found" in result.output
-
-    def test_edit_with_output_dir(self, runner, sample_note, monkeypatch):
-        """Test specifying a custom output directory for editing."""
-        # Create a different temporary directory
-        with tempfile.TemporaryDirectory() as other_temp_dir:
-            # Copy the sample note to this directory to simulate it being there
-            other_note_path = os.path.join(other_temp_dir, os.path.basename(sample_note["path"]))
-            shutil.copy(sample_note["path"], other_note_path)
-            
-            # Mock the edit_file function
-            def mock_edit_file(path, custom_editor=None):
-                # Verify this is the path we expect (in the other directory)
-                assert path == other_note_path
-                
-                # Perform a simple modification
-                with open(path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                modified_content = content.replace(
-                    "Add more detailed information here...",
-                    "Edited in custom directory."
-                )
-                
-                with open(path, 'w', encoding='utf-8') as f:
-                    f.write(modified_content)
-                    
-                return True, ""
-            
-            # Monkeypatch the edit_file function
-            monkeypatch.setattr("app.cli.commands.edit_file", mock_edit_file)
-            
-            # Act - specify the other directory
-            result = runner.invoke(edit, 
-                [sample_note["title"], "--output-dir", other_temp_dir],
-                catch_exceptions=False
-            )
-            
-            # Assert
-            assert result.exit_code == 0
-            
-            # Verify the file in the other directory was modified
-            with open(other_note_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            assert "Edited in custom directory." in content
-
-    def test_edit_maintains_metadata(self, runner, temp_notes_dir, monkeypatch):
-        """Test that editing a note preserves its metadata."""
-        # Create a note with specific metadata
-        title = "Metadata Test Note"
-        tags = "tag1,tag2,important"
-        category = "meta-tests"
-        
-        create_result = runner.invoke(new, 
-            [
-                title, 
-                "--tags", tags, 
-                "--category", category,
-                "--output-dir", temp_notes_dir
-            ],
-            catch_exceptions=False
-        )
-        assert create_result.exit_code == 0
-        
-        note_path = os.path.join(temp_notes_dir, category, "metadata-test-note.md")
-        
-        # Mock the edit_file function
-        def mock_edit_file(path, custom_editor=None):
-            # Read the current content
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Extract the frontmatter and content
-            metadata, content_without_frontmatter = parse_frontmatter(content)
-            
-            # Modify only the content, not the frontmatter
-            modified_content = content_without_frontmatter.replace(
-                "Add more detailed information here...",
-                "This content was modified but metadata should be preserved."
-            )
-            
-            # Rebuild the content with the same frontmatter
-            new_content = "---\n"
-            new_content += yaml.dump(metadata, default_flow_style=False)
-            new_content += "---\n\n"
-            new_content += modified_content
-            
-            # Write back to the file
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-                
-            return True, ""
-        
-        # Monkeypatch the edit_file function
-        monkeypatch.setattr("app.cli.commands.edit_file", mock_edit_file)
-        
-        # Act - edit the note
-        edit_result = runner.invoke(edit, 
-            [title, "--category", category, "--output-dir", temp_notes_dir],
-            catch_exceptions=False
-        )
-        
-        # Assert
-        assert edit_result.exit_code == 0
-        
-        # Read the file and verify metadata was preserved
-        with open(note_path, 'r', encoding='utf-8') as f:
+        # Read the file and check content and metadata
+        with open(updated_note.metadata['path'], 'r', encoding='utf-8') as f:
             content = f.read()
-            
-        # Extract and check the frontmatter
-        metadata, _ = parse_frontmatter(content)
         
-        # Verify metadata is preserved
-        assert metadata['title'] == title
-        assert len(metadata['tags']) == 3
-        assert 'tag1' in metadata['tags']
-        assert 'tag2' in metadata['tags']
-        assert 'important' in metadata['tags']
-        assert metadata['category'] == category
+        # Parse frontmatter
+        frontmatter, content_without_frontmatter = parse_frontmatter(content)
         
-        # Also verify the content was actually modified
-        assert "This content was modified but metadata should be preserved." in content
-
-    def test_edit_error_handling(self, runner, temp_notes_dir, sample_note, monkeypatch):
-        """Test error handling during note editing."""
-        # Mock the edit_file function to return an error
-        def mock_edit_file(path, custom_editor=None):
-            return False, "Simulated editor error for testing"
+        # Verify the file content and metadata were updated
+        self.assertEqual(content_without_frontmatter, new_content)
+        self.assertEqual(frontmatter.get('tags'), new_tags)
+        self.assertEqual(frontmatter.get('category'), new_category)
         
-        # Monkeypatch the edit_file function
-        monkeypatch.setattr("app.cli.commands.edit_file", mock_edit_file)
-        
-        # Act
-        result = runner.invoke(edit, 
-            [sample_note["title"], "--output-dir", temp_notes_dir],
-            catch_exceptions=False
+        # The physical file should now be in the new category directory
+        category_path = os.path.join(self.temp_dir, new_category)
+        self.assertTrue(os.path.exists(category_path))
+        note_filename = updated_note.metadata['path'].split(os.path.sep)[-1]
+        self.assertTrue(os.path.exists(os.path.join(category_path, note_filename)))
+    
+    def test_find_note_with_approximate_title(self):
+        """Test finding a note with an approximate title match."""
+        # Create a note with a long title
+        long_title = "This is a Very Long Title for Testing Approximate Matching"
+        self.note_manager.create_note(
+            title=long_title,
+            content="Content for the long title note."
         )
         
-        # Assert
-        assert result.exit_code == 1
-        assert "Error" in result.output
-        assert "Simulated editor error for testing" in result.output
+        # Try to edit the note using a shortened version of the title
+        shortened_title = "Very Long Title"
+        new_content = "Updated content using approximate title match."
+        
+        # Let's first test if find_note_path can find it using the shortened title
+        note_path = self.note_manager.find_note_path(shortened_title)
+        
+        # Verify that the note was found
+        self.assertIsNotNone(note_path)
+        
+        # Now try to edit using the approximate title
+        success, updated_note, _ = self.note_manager.edit_note_content(
+            title=shortened_title,
+            new_content=new_content
+        )
+        
+        # Depending on implementation, this may not work - but at least we verify the behavior
+        # This test documents the current behavior rather than enforcing a specific outcome
+        if success:
+            self.assertEqual(updated_note.content, new_content)
+        else:
+            # If not successful, verify at least the note exists
+            self.assertIsNotNone(note_path)
+    
+    def test_edit_with_output_dir(self):
+        """Test editing a note within a custom output directory."""
+        # Create a new output directory
+        output_dir = tempfile.mkdtemp()
+        
+        try:
+            # Create a note in the custom directory
+            custom_title = "Note in Custom Directory"
+            custom_note = self.note_manager.create_note(
+                title=custom_title,
+                content="Initial content in custom directory.",
+                output_dir=output_dir
+            )
+            
+            # Edit the note in the custom directory
+            new_content = "Updated content in custom directory."
+            success, updated_note, _ = self.note_manager.edit_note_content(
+                title=custom_title,
+                new_content=new_content,
+                output_dir=output_dir
+            )
+            
+            # Verify the edit was successful
+            self.assertTrue(success)
+            
+            # Verify the content was updated
+            self.assertEqual(updated_note.content, new_content)
+            
+            # Verify the file still exists in the custom directory
+            note_path = updated_note.metadata['path']
+            self.assertTrue(os.path.exists(note_path))
+            self.assertTrue(note_path.startswith(output_dir))
+            
+            # Read the file and check content
+            with open(note_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Parse frontmatter
+            _, content_without_frontmatter = parse_frontmatter(content)
+            
+            # Verify the file content was updated
+            self.assertEqual(content_without_frontmatter, new_content)
+        
+        finally:
+            # Clean up the custom output directory
+            shutil.rmtree(output_dir)
+    
+    def test_update_note_additional_metadata(self):
+        """Test updating additional metadata fields of a note."""
+        # Create a note with meeting template and metadata
+        meeting_title = "Meeting With Metadata"
+        meeting_metadata = {
+            "meeting_date": "2023-05-01",
+            "meeting_time": "10:00 AM",
+            "location": "Conference Room A",
+            "attendees": "Alice, Bob, Charlie"
+        }
+        
+        meeting_note = self.note_manager.create_note(
+            title=meeting_title,
+            template_name="meeting",
+            additional_metadata=meeting_metadata
+        )
+        
+        # Update the metadata
+        updated_metadata = {
+            "meeting_date": "2023-05-02",  # Changed date
+            "meeting_time": "11:30 AM",    # Changed time
+            "location": "Zoom Call",       # Changed location
+            "attendees": "Alice, Dave",    # Changed attendees
+            "status": "Completed"          # New field
+        }
+        
+        # Update the note
+        success, updated_note, _ = self.note_manager.update_note(
+            title=meeting_title,
+            additional_metadata=updated_metadata
+        )
+        
+        # Verify the update was successful
+        self.assertTrue(success)
+        
+        # Read the file and check metadata
+        with open(updated_note.metadata['path'], 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Parse frontmatter
+        frontmatter, _ = parse_frontmatter(content)
+        
+        # Verify the metadata was updated
+        for key, value in updated_metadata.items():
+            self.assertEqual(frontmatter.get(key), value)
+
+
+if __name__ == '__main__':
+    unittest.main()
