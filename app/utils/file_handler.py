@@ -1,10 +1,10 @@
 """
-File handling utilities for MarkNote.
+Enhanced file handling utilities for MarkNote with link support.
 """
 import os
 import sys
 import yaml
-from typing import Dict, Any, Tuple, Optional, List
+from typing import Dict, Any, Tuple, Optional, List, Set
 
 def get_default_notes_dir() -> str:
     """
@@ -98,6 +98,11 @@ def parse_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
             # Parse the YAML frontmatter
             try:
                 metadata = yaml.safe_load(frontmatter) or {}
+                
+                # Convert linked_notes to set if present
+                if 'linked_notes' in metadata and isinstance(metadata['linked_notes'], list):
+                    metadata['linked_notes'] = set(metadata['linked_notes'])
+                
                 content_without_frontmatter = content[end_index + 3:].strip()
             except yaml.YAMLError:
                 # If parsing fails, return empty metadata
@@ -119,8 +124,13 @@ def add_frontmatter(content: str, metadata: Dict[str, Any]) -> str:
     # Remove any existing frontmatter
     _, clean_content = parse_frontmatter(content)
     
+    # Handle linked_notes conversion from set to list for YAML
+    metadata_copy = metadata.copy()
+    if 'linked_notes' in metadata_copy and isinstance(metadata_copy['linked_notes'], set):
+        metadata_copy['linked_notes'] = list(metadata_copy['linked_notes'])
+    
     # Convert metadata to YAML
-    frontmatter = yaml.dump(metadata, default_flow_style=False)
+    frontmatter = yaml.dump(metadata_copy, default_flow_style=False)
     
     # Add frontmatter to content
     return f"---\n{frontmatter}---\n\n{clean_content}"

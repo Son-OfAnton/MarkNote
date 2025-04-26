@@ -6,7 +6,9 @@ updated_at: {{ updated_at }}
 {% for tag in tags %}  - {{ tag }}
 {% endfor %}{% endif %}
 {% if category %}category: {{ category }}
-{% endif %}type: journal
+{% endif %}{% if linked_notes %}linked_notes:
+{% for link in linked_notes %}  - {{ link }}
+{% endfor %}{% endif %}type: journal
 date: {{ date | default(created_at.split('T')[0]) }}
 mood: {{ mood | default('') }}
 ---
@@ -29,8 +31,15 @@ Things I'm grateful for today:
 2. 
 3. 
 
+{% if linked_notes %}
+## Related Notes
+
+{% for link in linked_notes %}* [[{{ link }}]]
+{% endfor %}
+{% endif %}
+
 ## Tomorrow's Focus
 
 - [ ] 
 - [ ] 
-- [ ] 
+- [ ]

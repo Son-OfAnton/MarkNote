@@ -8,6 +8,7 @@ import click
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
+from rich.table import Table
 import app.models.note
 
 from app.core.note_manager import NoteManager
@@ -506,6 +507,248 @@ def editors():
     except Exception as e:
         console.print(f"[bold red]Error listing editors:[/bold red] {str(e)}")
         return 1
+    
+@click.group()
+def link():
+    """Commands for managing links between notes."""
+    pass
+
+@link.command(name="add")
+@click.argument("source")
+@click.argument("target")
+@click.option("--bidirectional", "-b", is_flag=True, help="Create a two-way link between notes.")
+@click.option("--category", "-c", help="Category of the source note.")
+@click.option("--target-category", "-tc", help="Category of the target note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+def add_link(source, target, bidirectional, category, target_category, output_dir):
+    """
+    Add a link from SOURCE note to TARGET note.
+    
+    If --bidirectional is specified, a link will also be created from TARGET to SOURCE.
+    """
+    note_manager = NoteManager()
+    
+    # Add link between notes
+    success, error = note_manager.add_link_between_notes(
+        source_title=source,
+        target_title=target,
+        bidirectional=bidirectional,
+        category=category,
+        target_category=target_category,
+        output_dir=output_dir
+    )
+    
+    if success:
+        if bidirectional:
+            console.print(f"[bold green]Successfully linked[/bold green] '{source}' [bold]↔[/bold] '{target}' [dim](bidirectional)[/dim]")
+        else:
+            console.print(f"[bold green]Successfully linked[/bold green] '{source}' [bold]→[/bold] '{target}'")
+    else:
+        console.print(f"[bold red]Error:[/bold red] {error}")
+        return 1
+    
+    return 0
+
+@link.command(name="remove")
+@click.argument("source")
+@click.argument("target")
+@click.option("--bidirectional", "-b", is_flag=True, help="Remove links in both directions.")
+@click.option("--category", "-c", help="Category of the source note.")
+@click.option("--target-category", "-tc", help="Category of the target note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+def remove_link(source, target, bidirectional, category, target_category, output_dir):
+    """
+    Remove a link from SOURCE note to TARGET note.
+    
+    If --bidirectional is specified, links in both directions will be removed.
+    """
+    note_manager = NoteManager()
+    
+    # Remove link between notes
+    success, error = note_manager.remove_link_between_notes(
+        source_title=source,
+        target_title=target,
+        bidirectional=bidirectional,
+        category=category,
+        target_category=target_category,
+        output_dir=output_dir
+    )
+    
+    if success:
+        if bidirectional:
+            console.print(f"[bold green]Successfully removed link[/bold green] between '{source}' and '{target}' [dim](bidirectional)[/dim]")
+        else:
+            console.print(f"[bold green]Successfully removed link[/bold green] from '{source}' to '{target}'")
+    else:
+        console.print(f"[bold red]Error:[/bold red] {error}")
+        return 1
+    
+    return 0
+
+@link.command(name="list")
+@click.argument("title")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--backlinks", "-b", is_flag=True, help="Show notes that link to this note instead.")
+def list_links(title, category, output_dir, backlinks):
+    """
+    List all links from the specified note.
+    
+    If --backlinks is specified, show notes that link to this note instead.
+    """
+    note_manager = NoteManager()
+    
+    if backlinks:
+        # Get backlinks (notes that link to this note)
+        success, linked_notes, error = note_manager.get_backlinks(
+            title=title,
+            category=category,
+            output_dir=output_dir
+        )
+        link_type = "backlinks"
+    else:
+        # Get outgoing links from this note
+        success, linked_notes, error = note_manager.get_linked_notes(
+            title=title,
+            category=category,
+            output_dir=output_dir
+        )
+        link_type = "linked notes"
+    
+    if not success:
+        console.print(f"[bold red]Error:[/bold red] {error}")
+        return 1
+    
+    # Check if there are any linked notes
+    if not linked_notes:
+        if backlinks:
+            console.print(f"No notes link to [bold cyan]'{title}'[/bold cyan]")
+        else:
+            console.print(f"No links found from [bold cyan]'{title}'[/bold cyan] to other notes")
+        return 0
+    
+    # Create a table to display linked notes
+    table = Table(title=f"{link_type.capitalize()} for '{title}'")
+    table.add_column("Title", style="cyan")
+    table.add_column("Category", style="green")
+    table.add_column("Tags", style="yellow")
+    table.add_column("Last Modified", style="dim")
+    
+    # Add each linked note to the table
+    for note in linked_notes:
+        table.add_row(
+            note.title,
+            note.category or "None",
+            ", ".join(note.tags) if note.tags else "None",
+            note.updated_at.strftime("%Y-%m-%d %H:%M")
+        )
+    
+    # Display the table
+    console.print(table)
+    
+    # If there was a warning about missing notes, display it
+    if error:
+        console.print(f"[yellow]Warning:[/yellow] {error}")
+    
+    return 0
+
+@link.command(name="orphaned")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+def find_orphaned_links(output_dir):
+    """
+    Find all links that point to non-existent notes.
+    """
+    note_manager = NoteManager()
+    
+    # Find orphaned links
+    orphaned_links = note_manager.find_orphaned_links(output_dir=output_dir)
+    
+    if not orphaned_links:
+        console.print("[bold green]No orphaned links found.[/bold green]")
+        return 0
+    
+    # Create a table to display orphaned links
+    table = Table(title="Orphaned Links")
+    table.add_column("Note", style="cyan")
+    table.add_column("Category", style="green")
+    table.add_column("Missing Links", style="yellow")
+    
+    # Add each note with orphaned links to the table
+    for note, missing_links in orphaned_links:
+        table.add_row(
+            note.title,
+            note.category or "None",
+            ", ".join(missing_links)
+        )
+    
+    # Display the table
+    console.print(table)
+    console.print("\n[bold yellow]Tip:[/bold yellow] To fix orphaned links, either create the missing notes or remove the links.")
+    
+    return 0
+
+@link.command(name="show")
+@click.argument("title")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+def show_note_with_links(title, category, output_dir):
+    """
+    Display a note with its linked notes and backlinks.
+    """
+    note_manager = NoteManager()
+    
+    # Get the note and its links
+    note, linked_notes, backlinks = note_manager.get_note_with_links(
+        title=title,
+        category=category,
+        output_dir=output_dir
+    )
+    
+    if not note:
+        console.print(f"[bold red]Error:[/bold red] Note '{title}' not found.")
+        return 1
+    
+    # Display the note content
+    console.print(Panel(
+        f"[bold cyan]{note.title}[/bold cyan]\n\n{note.content}",
+        title=f"MarkNote - {note.title}",
+        subtitle=f"Category: {note.category or 'None'} | Tags: {', '.join(note.tags) if note.tags else 'None'}"
+    ))
+    
+    # Display linked notes if any
+    if linked_notes:
+        linked_table = Table(title="Linked Notes")
+        linked_table.add_column("Title", style="cyan")
+        linked_table.add_column("Category", style="green")
+        
+        for linked_note in linked_notes:
+            linked_table.add_row(linked_note.title, linked_note.category or "None")
+        
+        console.print(linked_table)
+    else:
+        console.print("[dim]No linked notes.[/dim]")
+    
+    # Display backlinks if any
+    if backlinks:
+        backlinks_table = Table(title="Backlinks (Notes linking to this note)")
+        backlinks_table.add_column("Title", style="cyan")
+        backlinks_table.add_column("Category", style="green")
+        
+        for backlink in backlinks:
+            backlinks_table.add_row(backlink.title, backlink.category or "None")
+        
+        console.print(backlinks_table)
+    else:
+        console.print("[dim]No backlinks.[/dim]")
+    
+    return 0
+
+# Register the link command group with the main CLI
+def register_link_commands(cli):
+    """
+    Register the link command group with the main CLI.
+    """
+    cli.add_command(link)
 
 if __name__ == "__main__":
     cli()

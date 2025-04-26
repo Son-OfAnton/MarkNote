@@ -6,7 +6,9 @@ updated_at: {{ updated_at }}
 {% for tag in tags %}  - {{ tag }}
 {% endfor %}{% endif %}
 {% if category %}category: {{ category }}
-{% endif %}type: default
+{% endif %}{% if linked_notes %}linked_notes:
+{% for link in linked_notes %}  - {{ link }}
+{% endfor %}{% endif %}type: default
 ---
 
 # {{ title }}
@@ -18,6 +20,13 @@ Write a brief overview here...
 ## Details
 
 Add more detailed information here...
+
+{% if linked_notes %}
+## Related Notes
+
+{% for link in linked_notes %}* [[{{ link }}]]
+{% endfor %}
+{% endif %}
 
 ## Conclusion
 

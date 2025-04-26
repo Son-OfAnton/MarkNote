@@ -1,12 +1,20 @@
+"""
+Main CLI entry point with link commands integrated.
+"""
 #!/usr/bin/env python3
-"""
-MarkNote - A command-line tool for creating, organizing, and managing Markdown-based notes.
-"""
+
 import sys
-from app.cli.commands import cli
+import click
+from rich.console import Console
+
+from app.cli.commands import cli, link, register_link_commands
 
 def main():
     """Main entry point for the application"""
+    # Register link commands
+    register_link_commands(cli)
+    
+    # Run the CLI
     return cli()
 
 if __name__ == "__main__":
