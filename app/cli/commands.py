@@ -3,12 +3,13 @@ CLI commands for MarkNote
 """
 import os
 import sys
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import click
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from rich.table import Table
+from rich.text import Text
 import app.models.note
 
 from app.core.note_manager import NoteManager
@@ -742,6 +743,454 @@ def show_note_with_links(title, category, output_dir):
         console.print("[dim]No backlinks.[/dim]")
     
     return 0
+
+@click.command()
+@click.option("--tag", "-t", help="Filter notes by tag.")
+@click.option("--category", "-c", help="Filter notes by category.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--sort", "-s", type=click.Choice(['date', 'title', 'links']), default='date',
+              help="Sort notes by date (default), title, or number of links.")
+@click.option("--show-links/--hide-links", default=True, help="Show link information in the listing.")
+@click.option("--detail", "-d", is_flag=True, help="Show more detailed information including snippets and all links.")
+def list_notes(tag: Optional[str], category: Optional[str], output_dir: Optional[str], 
+              sort: str, show_links: bool, detail: bool):
+    """List notes, optionally filtered by tag or category."""
+    note_manager = NoteManager()
+    
+    try:
+        # Get all notes based on filters
+        notes = note_manager.list_notes(tag=tag, category=category, output_dir=output_dir)
+        
+        if not notes:
+            if tag or category:
+                filters = []
+                if tag:
+                    filters.append(f"tag '{tag}'")
+                if category:
+                    filters.append(f"category '{category}'")
+                
+                console.print(f"[yellow]No notes found matching {' and '.join(filters)}.[/yellow]")
+            else:
+                console.print("[yellow]No notes found.[/yellow]")
+                
+                # If output directory is specified, show that
+                if output_dir:
+                    console.print(f"Directory: {output_dir}")
+            return 0
+        
+        # Sort notes based on the specified criteria
+        if sort == 'date':
+            # Default sort by updated_at (most recent first)
+            pass  # notes are already sorted by date
+        elif sort == 'title':
+            notes.sort(key=lambda x: x.title.lower())
+        elif sort == 'links':
+            # Sort by total links (outgoing + incoming)
+            # We need to find all backlinks first
+            notes_by_title = {note.title: note for note in notes}
+            backlink_counts: Dict[str, int] = {}
+            
+            # Count backlinks for each note
+            for note in notes:
+                for linked_title in note.get_links():
+                    if linked_title in backlink_counts:
+                        backlink_counts[linked_title] += 1
+                    else:
+                        backlink_counts[linked_title] = 1
+            
+            # Sort by total links (outgoing + incoming)
+            notes.sort(
+                key=lambda x: (len(x.get_links()) + backlink_counts.get(x.title, 0)),
+                reverse=True
+            )
+        
+        # If we're showing links, we need to calculate them
+        backlink_counts = {}
+        linked_to_notes = {}
+        note_titles = {note.title for note in notes}
+        
+        if show_links:
+            # Find all links between notes in the list
+            for note in notes:
+                outgoing_links = note.get_links()
+                
+                # Record backlinks
+                for linked_title in outgoing_links:
+                    if linked_title in note_titles:  # Only count links to notes in our list
+                        if linked_title in backlink_counts:
+                            backlink_counts[linked_title] += 1
+                        else:
+                            backlink_counts[linked_title] = 1
+                            
+                        # Record which notes link to which
+                        if linked_title not in linked_to_notes:
+                            linked_to_notes[linked_title] = []
+                        linked_to_notes[linked_title].append(note.title)
+        
+        # Create a table to display the notes
+        if detail:
+            # Detailed view with snippets and links
+            table = Table(title=f"Notes List ({len(notes)} notes)", expand=True)
+            table.add_column("Title", style="cyan", no_wrap=True)
+            table.add_column("Updated", style="green")
+            table.add_column("Category", style="yellow")
+            table.add_column("Tags", style="magenta")
+            
+            if show_links:
+                table.add_column("Links", justify="right", style="blue")
+                table.add_column("Linked From", justify="right", style="blue")
+                
+            table.add_column("Content Preview", style="dim", no_wrap=False)
+            
+            for note in notes:
+                # Process links if showing
+                links_cell = ""
+                linked_from_cell = ""
+                
+                if show_links:
+                    # Outgoing links
+                    outgoing_links = note.get_links()
+                    outgoing_in_list = [l for l in outgoing_links if l in note_titles]
+                    
+                    if outgoing_in_list:
+                        links_text = Text()
+                        for i, link in enumerate(outgoing_in_list):
+                            links_text.append(link, style="cyan")
+                            if i < len(outgoing_in_list) - 1:
+                                links_text.append(", ")
+                        links_cell = links_text
+                    else:
+                        links_cell = "None"
+                    
+                    # Incoming links (backlinks)
+                    if note.title in linked_to_notes:
+                        backlinks = linked_to_notes[note.title]
+                        backlinks_text = Text()
+                        for i, backlink in enumerate(backlinks):
+                            backlinks_text.append(backlink, style="cyan")
+                            if i < len(backlinks) - 1:
+                                backlinks_text.append(", ")
+                        linked_from_cell = backlinks_text
+                    else:
+                        linked_from_cell = "None"
+                
+                # Get content snippet
+                content_preview = note.content.strip().split('\n\n')[0]
+                if len(content_preview) > 100:
+                    content_preview = content_preview[:97] + "..."
+                
+                # Add the row
+                row = [
+                    note.title,
+                    note.updated_at.strftime("%Y-%m-%d %H:%M"),
+                    note.category or "None",
+                    ", ".join(note.tags) if note.tags else "None"
+                ]
+                
+                if show_links:
+                    row.extend([links_cell, linked_from_cell])
+                    
+                row.append(content_preview)
+                
+                table.add_row(*row)
+        
+        else:
+            # Compact view
+            table = Table(title=f"Notes List ({len(notes)} notes)")
+            table.add_column("Title", style="cyan", no_wrap=True)
+            table.add_column("Updated", style="green")
+            table.add_column("Category", style="yellow")
+            table.add_column("Tags", style="magenta")
+            
+            if show_links:
+                table.add_column("Links Out", justify="right", style="blue")
+                table.add_column("Links In", justify="right", style="blue")
+            
+            for note in notes:
+                # Get links count
+                outgoing_links = len([l for l in note.get_links() if l in note_titles])
+                incoming_links = backlink_counts.get(note.title, 0)
+                
+                # Add row
+                row = [
+                    note.title,
+                    note.updated_at.strftime("%Y-%m-%d"),
+                    note.category or "None",
+                    ", ".join(note.tags) if note.tags else "None"
+                ]
+                
+                if show_links:
+                    row.extend([
+                        str(outgoing_links) if outgoing_links else "0",
+                        str(incoming_links) if incoming_links else "0"
+                    ])
+                
+                table.add_row(*row)
+        
+        console.print(table)
+        
+        # Show filter information
+        if tag or category:
+            filters = []
+            if tag:
+                filters.append(f"tag: [yellow]{tag}[/yellow]")
+            if category:
+                filters.append(f"category: [yellow]{category}[/yellow]")
+            
+            console.print(f"Filtered by {', '.join(filters)}")
+        
+        # Show output directory if specified
+        if output_dir:
+            console.print(f"Directory: [dim]{output_dir}[/dim]")
+            
+        return 0
+        
+    except Exception as e:
+        console.print(f"[bold red]Error listing notes:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+    
+@click.group()
+def network():
+    """Commands for analyzing note networks and connections."""
+    pass
+
+@network.command(name="stats")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--limit", "-l", default=10, help="Maximum number of notes to show.")
+def network_stats(output_dir, limit):
+    """
+    Show statistics about the note network.
+    """
+    note_manager = NoteManager()
+    
+    try:
+        # Get all notes
+        all_notes = note_manager.list_notes(output_dir=output_dir)
+        
+        if not all_notes:
+            console.print("[yellow]No notes found.[/yellow]")
+            return 0
+        
+        # Get link statistics
+        link_stats = note_manager.get_linked_notes_stats(output_dir=output_dir)
+        
+        # Calculate network stats
+        total_notes = len(all_notes)
+        notes_with_links = sum(1 for stats in link_stats.values() if stats[0] > 0 or stats[1] > 0)
+        notes_with_outgoing = sum(1 for stats in link_stats.values() if stats[0] > 0)
+        notes_with_incoming = sum(1 for stats in link_stats.values() if stats[1] > 0)
+        standalone_notes = total_notes - notes_with_links
+        
+        total_links = sum(stats[0] for stats in link_stats.values())
+        avg_links_per_note = total_links / total_notes if total_notes > 0 else 0
+        
+        # Display overall stats
+        stats_panel = Panel(
+            f"Total Notes: [bold]{total_notes}[/bold]\n"
+            f"Notes with Links: [bold]{notes_with_links}[/bold] ({notes_with_links/total_notes*100:.1f}%)\n"
+            f"Notes with Outgoing Links: [bold]{notes_with_outgoing}[/bold]\n"
+            f"Notes with Incoming Links: [bold]{notes_with_incoming}[/bold]\n"
+            f"Standalone Notes: [bold]{standalone_notes}[/bold]\n"
+            f"Total Links: [bold]{total_links}[/bold]\n"
+            f"Average Links per Note: [bold]{avg_links_per_note:.2f}[/bold]",
+            title="Network Statistics"
+        )
+        console.print(stats_panel)
+        
+        # Show the most connected notes
+        most_linked = note_manager.find_most_linked_notes(output_dir=output_dir, limit=limit)
+        
+        if most_linked:
+            table = Table(title=f"Most Connected Notes (Top {limit})")
+            table.add_column("Title", style="cyan")
+            table.add_column("Outgoing Links", justify="right", style="green")
+            table.add_column("Incoming Links", justify="right", style="blue")
+            table.add_column("Total Links", justify="right", style="yellow")
+            
+            for title, outgoing, incoming in most_linked:
+                table.add_row(
+                    title,
+                    str(outgoing),
+                    str(incoming),
+                    str(outgoing + incoming)
+                )
+            
+            console.print(table)
+        
+        # Show orphaned links if any exist
+        orphaned_links = note_manager.find_orphaned_links(output_dir=output_dir)
+        if orphaned_links:
+            console.print(f"\n[yellow]Warning:[/yellow] Found {len(orphaned_links)} notes with orphaned links (links to non-existent notes).")
+            console.print("Use [bold]marknote link orphaned[/bold] to view details.")
+        
+        return 0
+    
+    except Exception as e:
+        console.print(f"[bold red]Error analyzing network:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+@network.command(name="standalone")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+def find_standalone_notes(output_dir):
+    """
+    Find notes that are not connected to any other notes.
+    """
+    note_manager = NoteManager()
+    
+    try:
+        # Find standalone notes
+        standalone_notes = note_manager.find_standalone_notes(output_dir=output_dir)
+        
+        if not standalone_notes:
+            console.print("[green]All notes are connected to at least one other note.[/green]")
+            return 0
+        
+        # Display the standalone notes
+        table = Table(title=f"Standalone Notes ({len(standalone_notes)})")
+        table.add_column("Title", style="cyan")
+        table.add_column("Category", style="yellow")
+        table.add_column("Updated", style="green")
+        table.add_column("Tags", style="magenta")
+        
+        for note in standalone_notes:
+            table.add_row(
+                note.title,
+                note.category or "None",
+                note.updated_at.strftime("%Y-%m-%d"),
+                ", ".join(note.tags) if note.tags else "None"
+            )
+        
+        console.print(table)
+        console.print("\n[blue]Tip:[/blue] Connect these notes to your knowledge network using [bold]marknote link add[/bold]")
+        
+        return 0
+    
+    except Exception as e:
+        console.print(f"[bold red]Error finding standalone notes:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+@network.command(name="path")
+@click.argument("source")
+@click.argument("target")
+@click.option("--category", "-c", help="Category of the source note.")
+@click.option("--target-category", "-tc", help="Category of the target note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--max-depth", "-d", default=5, help="Maximum path length to search.")
+def find_path_between_notes(source, target, category, target_category, output_dir, max_depth):
+    """
+    Find the shortest path between SOURCE and TARGET notes.
+    
+    This command attempts to find a connection between two notes by following links.
+    """
+    note_manager = NoteManager()
+    
+    try:
+        # Verify that source and target notes exist
+        source_note = note_manager.get_note(source, category, output_dir)
+        if not source_note:
+            console.print(f"[bold red]Error:[/bold red] Source note '{source}' not found.")
+            return 1
+        
+        target_note = note_manager.get_note(target, target_category, output_dir)
+        if not target_note:
+            console.print(f"[bold red]Error:[/bold red] Target note '{target}' not found.")
+            return 1
+        
+        # Generate the link graph
+        outgoing_links, _ = note_manager.generate_link_graph(output_dir=output_dir)
+        
+        # Find the shortest path using breadth-first search
+        paths = find_paths(outgoing_links, source, target, max_depth)
+        
+        if not paths:
+            console.print(f"[yellow]No path found between[/yellow] '{source}' [yellow]and[/yellow] '{target}'.")
+            console.print(f"[dim]Try increasing the maximum depth (current: {max_depth}) or add more links.[/dim]")
+            return 0
+        
+        # Sort paths by length (shortest first)
+        paths.sort(key=len)
+        
+        # Display the paths
+        console.print(f"[bold green]Found {len(paths)} path(s) between[/bold green] '{source}' [bold green]and[/bold green] '{target}':")
+        
+        for i, path in enumerate(paths, 1):
+            path_str = " → ".join([f"[cyan]{note}[/cyan]" for note in path])
+            console.print(f"{i}. {path_str} [dim]({len(path)-1} steps)[/dim]")
+        
+        return 0
+    
+    except Exception as e:
+        console.print(f"[bold red]Error finding path:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+def find_paths(link_graph, source, target, max_depth):
+    """
+    Find all paths from source to target using breadth-first search.
+    
+    Args:
+        link_graph: Dictionary mapping note titles to sets of linked note titles.
+        source: Title of the source note.
+        target: Title of the target note.
+        max_depth: Maximum path length to consider.
+    
+    Returns:
+        A list of paths, where each path is a list of note titles.
+    """
+    if source == target:
+        return [[source]]
+    
+    # Queue of (current_node, path_so_far)
+    queue = [(source, [source])]
+    paths = []
+    
+    # Keep track of visited nodes to avoid cycles
+    visited = set()
+    
+    while queue:
+        current, path = queue.pop(0)
+        
+        # Skip if we've visited this node already
+        if current in visited:
+            continue
+        
+        # Skip if path is too long
+        if len(path) > max_depth:
+            continue
+        
+        # Mark as visited
+        visited.add(current)
+        
+        # Get linked notes
+        linked_notes = link_graph.get(current, set())
+        
+        for linked in linked_notes:
+            # Create new path with this node
+            new_path = path + [linked]
+            
+            # If we found the target, add to results
+            if linked == target:
+                paths.append(new_path)
+            # Otherwise add to queue for further exploration
+            elif linked not in path:  # Avoid cycles
+                queue.append((linked, new_path))
+    
+    return paths
+
+
+def register_network_commands(cli):
+    """
+    Register the network command group with the main CLI.
+    """
+    cli.add_command(network)
+
 
 # Register the link command group with the main CLI
 def register_link_commands(cli):

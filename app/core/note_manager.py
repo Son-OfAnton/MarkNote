@@ -900,3 +900,152 @@ class NoteManager:
         _, backlinks, _ = self.get_backlinks(title, category, output_dir)
 
         return note, linked_notes, backlinks
+
+
+    def generate_link_graph(self, output_dir: Optional[str] = None) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]]]:
+        """
+        Generate a graph of all links between notes.
+        
+        Args:
+            output_dir: Optional directory to look for notes.
+            
+        Returns:
+            A tuple of (outgoing_links, incoming_links) dictionaries.
+            - outgoing_links maps note titles to sets of linked note titles
+            - incoming_links maps note titles to sets of notes that link to them
+        """
+        # Get all notes
+        all_notes = self.list_notes(output_dir=output_dir)
+        
+        # Create the link graphs
+        outgoing_links: Dict[str, Set[str]] = {}
+        incoming_links: Dict[str, Set[str]] = {}
+        
+        # Initialize graph with all notes (even those without links)
+        for note in all_notes:
+            outgoing_links[note.title] = set()
+            incoming_links[note.title] = set()
+        
+        # Populate outgoing and incoming links
+        for note in all_notes:
+            if hasattr(note, 'linked_notes') and note.linked_notes:
+                outgoing_links[note.title] = set(note.linked_notes)
+                
+                # Update the incoming links for each linked note
+                for linked_title in note.linked_notes:
+                    if linked_title in incoming_links:
+                        incoming_links[linked_title].add(note.title)
+                    else:
+                        # If it's a link to a note we haven't seen yet
+                        incoming_links[linked_title] = {note.title}
+        
+        return outgoing_links, incoming_links
+
+    def get_linked_notes_stats(self, output_dir: Optional[str] = None) -> Dict[str, Tuple[int, int, List[str], List[str]]]:
+        """
+        Get statistics about links between notes.
+        
+        Args:
+            output_dir: Optional directory to look for notes.
+            
+        Returns:
+            A dictionary mapping note titles to tuples of:
+            (outgoing link count, incoming link count, outgoing link titles, incoming link titles)
+        """
+        outgoing_links, incoming_links = self.generate_link_graph(output_dir=output_dir)
+        
+        link_stats = {}
+        
+        # For each note, compile its statistics
+        for title in outgoing_links:
+            out_links = list(outgoing_links[title])
+            in_links = list(incoming_links.get(title, set()))
+            
+            link_stats[title] = (
+                len(out_links),  # Outgoing link count
+                len(in_links),   # Incoming link count
+                out_links,       # List of outgoing link titles
+                in_links         # List of incoming link titles
+            )
+        
+        # Also include notes that only have incoming links
+        for title in incoming_links:
+            if title not in link_stats:
+                in_links = list(incoming_links[title])
+                link_stats[title] = (0, len(in_links), [], in_links)
+        
+        return link_stats
+
+    def find_most_linked_notes(self, output_dir: Optional[str] = None, limit: int = 10) -> List[Tuple[str, int, int]]:
+        """
+        Find the most connected notes in the network.
+        
+        Args:
+            output_dir: Optional directory to look for notes.
+            limit: Maximum number of notes to return.
+            
+        Returns:
+            A list of tuples (note_title, outgoing_links, incoming_links) sorted by total links.
+        """
+        link_stats = self.get_linked_notes_stats(output_dir=output_dir)
+        
+        # Sort by total links (outgoing + incoming)
+        sorted_stats = sorted(
+            [(title, stats[0], stats[1]) for title, stats in link_stats.items()],
+            key=lambda x: x[1] + x[2],  # Sort by sum of outgoing and incoming
+            reverse=True  # Most linked first
+        )
+        
+        return sorted_stats[:limit]
+
+    def find_orphaned_links(self, output_dir: Optional[str] = None) -> List[Tuple[Note, Set[str]]]:
+        """
+        Find all orphaned links (links to notes that don't exist).
+        
+        Args:
+            output_dir: Optional directory to look for notes.
+                
+        Returns:
+            A list of tuples (note, set of orphaned link titles).
+        """
+        # Get all notes
+        all_notes = self.list_notes(output_dir=output_dir)
+        
+        # Create a set of all note titles
+        all_titles = {note.title for note in all_notes}
+        
+        # Find orphaned links
+        orphaned_links = []
+        
+        for note in all_notes:
+            linked_titles = note.get_links()
+            if linked_titles:
+                # Find links to non-existent notes
+                missing_links = linked_titles - all_titles
+                if missing_links:
+                    orphaned_links.append((note, missing_links))
+        
+        return orphaned_links
+
+    def find_standalone_notes(self, output_dir: Optional[str] = None) -> List[Note]:
+        """
+        Find notes that have no links to or from other notes.
+        
+        Args:
+            output_dir: Optional directory to look for notes.
+            
+        Returns:
+            A list of standalone notes.
+        """
+        outgoing_links, incoming_links = self.generate_link_graph(output_dir=output_dir)
+        all_notes = self.list_notes(output_dir=output_dir)
+        
+        standalone_notes = []
+        
+        for note in all_notes:
+            # Check if the note has any outgoing or incoming links
+            if (not outgoing_links.get(note.title) and 
+                not incoming_links.get(note.title)):
+                standalone_notes.append(note)
+        
+        return standalone_notes
