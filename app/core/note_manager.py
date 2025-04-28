@@ -904,6 +904,7 @@ class NoteManager:
         
         return standalone_notes
     
+    
     def list_notes(self, tag: Optional[str] = None,
                    category: Optional[str] = None,
                    output_dir: Optional[str] = None,
