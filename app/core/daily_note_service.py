@@ -1,130 +1,154 @@
+"""
+Service for managing daily notes.
+"""
 import os
-import time
-from datetime import datetime, timedelta
-import logging
-from typing import Optional, List, Dict, Any
+from datetime import datetime, date
+from typing import Dict, Any, Optional, Tuple, List
 
 from app.core.note_manager import NoteManager
+from app.config.config_manager import get_daily_note_config
+from app.utils.editor_handler import edit_file
 
 class DailyNoteService:
     """
-    Service for automatically generating daily notes.
+    Service for managing daily notes.
     """
-    
-    def __init__(self, output_dir: Optional[str] = None, 
-                 template: str = "daily",
-                 category: str = "daily",
-                 tags: List[str] = None,
-                 enabled: bool = True):
-        """
-        Initialize the daily note service.
-        
-        Args:
-            output_dir: Directory where to save the daily notes.
-            template: Template to use for daily notes.
-            category: Category for daily notes.
-            tags: Default tags for daily notes.
-            enabled: Whether the service is enabled.
-        """
+    def __init__(self):
         self.note_manager = NoteManager()
-        self.output_dir = output_dir
-        self.template = template
-        self.category = category
-        self.tags = tags if tags is not None else ["daily"]
-        self.enabled = enabled
-        self.logger = logging.getLogger(__name__)
+        self.config = get_daily_note_config()
     
-    def create_today_note(self) -> bool:
+    def get_or_create_todays_note(self, 
+                                 category: Optional[str] = None, 
+                                 output_dir: Optional[str] = None,
+                                 editor: Optional[str] = None,
+                                 auto_open: Optional[bool] = None) -> Tuple[bool, str, Any]:
         """
-        Create a daily note for today if it doesn't exist.
-        
-        Returns:
-            True if a new note was created, False otherwise.
-        """
-        if not self.enabled:
-            self.logger.info("Daily note service is disabled")
-            return False
-            
-        today = datetime.now()
-        
-        # Check if today's note already exists
-        title = today.strftime("Daily Note: %Y-%m-%d")
-        existing_note = self.note_manager.get_note(title, self.category, self.output_dir)
-        
-        if existing_note:
-            self.logger.info(f"Daily note for {today.strftime('%Y-%m-%d')} already exists")
-            return False
-            
-        # Create a new daily note
-        try:
-            success, message, note = self.note_manager.create_daily_note(
-                date=today,
-                template_name=self.template,
-                tags=self.tags,
-                category=self.category,
-                output_dir=self.output_dir,
-                force=False
-            )
-            
-            if success:
-                self.logger.info(f"Created daily note for {today.strftime('%Y-%m-%d')}")
-                return True
-            else:
-                self.logger.warning(f"Failed to create daily note: {message}")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Error creating daily note: {str(e)}")
-            return False
-    
-    def run_daemon(self, check_interval_seconds: int = 3600) -> None:
-        """
-        Run as a daemon process, creating daily notes as needed.
+        Get today's daily note if it exists, or create it if it doesn't.
         
         Args:
-            check_interval_seconds: How often to check if a new daily note needs to be created.
-        """
-        self.logger.info("Starting daily note daemon")
-        
-        last_date = datetime.now().date()
-        
-        while True:
-            # Check if it's a new day
-            current_date = datetime.now().date()
+            category: Optional category override.
+            output_dir: Optional output directory override.
+            editor: Optional editor to use.
+            auto_open: Whether to automatically open the note.
             
-            if current_date > last_date:
-                # It's a new day, create a new daily note
-                self.create_today_note()
-                last_date = current_date
-                
-            # Sleep for the specified interval
-            time.sleep(check_interval_seconds)
+        Returns:
+            A tuple containing (exists, message, note) where exists is True if the note
+            already existed, message is a descriptive string, and note is the Note object.
+        """
+        # Use config values if not overridden
+        if category is None:
+            category = self.config.get("category", "daily")
+        
+        # Check if today's note exists
+        exists, message, note = self.note_manager.get_todays_daily_note(category, output_dir)
+        
+        # Determine if we should open the note
+        should_open = auto_open if auto_open is not None else self.config.get("auto_open", True)
+        
+        if exists and should_open:
+            # Open the existing note if auto_open is enabled
+            note_path = note.metadata.get('path', '')
+            if note_path and os.path.exists(note_path):
+                edit_file(note_path, custom_editor=editor)
+        elif not exists and should_open and note:
+            # Open the newly created note if auto_open is enabled
+            note_path = note.metadata.get('path', '')
+            if note_path and os.path.exists(note_path):
+                edit_file(note_path, custom_editor=editor)
+        
+        return exists, message, note
+    
+    def create_note_for_date(self, 
+                           date_str: Optional[str] = None,
+                           tags: Optional[List[str]] = None,
+                           category: Optional[str] = None,
+                           template_name: Optional[str] = None,
+                           output_dir: Optional[str] = None,
+                           force: bool = False,
+                           editor: Optional[str] = None,
+                           auto_open: Optional[bool] = None) -> Tuple[bool, str, Any]:
+        """
+        Create a daily note for a specific date.
+        
+        Args:
+            date_str: Date string in format YYYY-MM-DD.
+            tags: Optional tags list.
+            category: Optional category override.
+            template_name: Optional template override.
+            output_dir: Optional output directory override.
+            force: Whether to force creation even if a note already exists.
+            editor: Optional editor to use.
+            auto_open: Whether to automatically open the note.
+            
+        Returns:
+            A tuple containing (success, message, note) where success is a boolean,
+            message is a descriptive string, and note is the Note object.
+        """
+        # Use config values if not overridden
+        if category is None:
+            category = self.config.get("category", "daily")
+            
+        if template_name is None:
+            template_name = self.config.get("template", "daily")
+            
+        if tags is None:
+            tags = self.config.get("default_tags", ["daily"])
+            
+        # Determine if we should open the note
+        should_open = auto_open if auto_open is not None else self.config.get("auto_open", True)
+        
+        # If date is not provided, use today
+        if not date_str:
+            date_str = date.today().strftime("%Y-%m-%d")
+            
+        # Parse the date
+        try:
+            parsed_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return False, f"Invalid date format: {date_str}. Expected format: YYYY-MM-DD", None
+            
+        # Check if a note already exists for this date
+        existing_note = None
+        if not force:
+            existing_note = self.note_manager.find_daily_note(parsed_date, category, output_dir)
+            
+        if existing_note:
+            # If a note already exists and force is False, return it
+            if should_open:
+                note_path = existing_note.metadata.get('path', '')
+                if note_path and os.path.exists(note_path):
+                    edit_file(note_path, custom_editor=editor)
+            
+            return True, f"Daily note for {date_str} already exists.", existing_note
+            
+        # Create a new note
+        success, message, note = self.note_manager.create_daily_note(
+            date_str=date_str,
+            tags=tags,
+            category=category,
+            template_name=template_name,
+            output_dir=output_dir
+        )
+        
+        # Open the note if auto_open is enabled
+        if success and should_open and note:
+            note_path = note.metadata.get('path', '')
+            if note_path and os.path.exists(note_path):
+                edit_file(note_path, custom_editor=editor)
+        
+        return success, message, note
+        
+# Create a global instance for easy access
+_daily_note_service = None
 
-
-def get_configured_daily_note_service():
+def get_daily_note_service() -> DailyNoteService:
     """
-    Get a DailyNoteService configured from the user's settings.
+    Get the global DailyNoteService instance.
     
     Returns:
-        A configured DailyNoteService instance.
+        The DailyNoteService instance.
     """
-    config = get_daily_note_config()
-    
-    return DailyNoteService(
-        output_dir=None,  # Use default
-        template=config.get("template", "daily"),
-        category=config.get("category", "daily"),
-        tags=config.get("tags", ["daily"]),
-        enabled=config.get("enabled", True)
-    )
-
-def run_auto_daily_note_service():
-    """
-    Run the daily note service if auto-create is enabled in the config.
-    This can be called at application startup.
-    """
-    config = get_daily_note_config()
-    
-    if config.get("auto_create", False) and config.get("enabled", True):
-        service = get_configured_daily_note_service()
-        service.create_today_note()
+    global _daily_note_service
+    if _daily_note_service is None:
+        _daily_note_service = DailyNoteService()
+    return _daily_note_service
