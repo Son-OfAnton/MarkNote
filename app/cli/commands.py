@@ -1,6 +1,7 @@
 """
 CLI commands for MarkNote
 """
+from datetime import date, datetime
 import os
 import sys
 from typing import Dict, List, Optional, Tuple
@@ -1016,6 +1017,192 @@ def register_link_commands(cli):
     Register the link command group with the main CLI.
     """
     cli.add_command(link)
+
+@cli.command()
+@click.option("--category", "-c", default="daily", help="Category to look in. Defaults to 'daily'.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+def today(category, output_dir):
+    """
+    Show today's daily note status and open it if it exists.
+    
+    If today's daily note doesn't exist, it will show a message.
+    """
+    try:
+        note_manager = NoteManager()
+        
+        # Get today's daily note
+        exists, message, note = note_manager.get_todays_daily_note(category, output_dir)
+        
+        if exists:
+            note_path = note.metadata.get('path', '')
+            date_str = note.metadata.get('date', date.today().strftime("%Y-%m-%d"))
+            day_str = note.metadata.get('day_of_week', date.today().strftime("%A"))
+            
+            console.print(Panel(
+                f"[bold]Today's Daily Note[/bold]\n\n"
+                f"[cyan]{note.title}[/cyan]\n"
+                f"Date: {date_str} ({day_str})\n"
+                f"Path: {note_path}\n",
+                title="Status", border_style="green"
+            ))
+            
+            # Ask if user wants to open the note
+            if click.confirm("Would you like to open today's note?", default=True):
+                # Pick a default editor
+                editor = None
+                success, error = edit_file(note_path, custom_editor=editor)
+                if not success:
+                    console.print(f"[bold red]Error opening editor:[/bold red] {error}")
+                    return 1
+        else:
+            # Note doesn't exist yet
+            today_date = date.today()
+            formatted_date = today_date.strftime("%Y-%m-%d")
+            day_name = today_date.strftime("%A")
+            
+            console.print(Panel(
+                f"No daily note exists for today ({formatted_date}, {day_name}).\n"
+                f"Use the [bold]daily[/bold] command to create one.",
+                title="Status", border_style="yellow"
+            ))
+            
+            # Ask if user wants to create one now
+            if click.confirm("Would you like to create today's note now?", default=True):
+                success, message, note = note_manager.create_daily_note(
+                    date_str=None,  # Today by default
+                    category=category,
+                    output_dir=output_dir
+                )
+                
+                if not success:
+                    console.print(f"[bold red]Error:[/bold red] {message}")
+                    return 1
+                    
+                note_path = note.metadata.get('path', '')
+                console.print(f"[bold green]Success:[/bold green] {message}")
+                console.print(f"Note path: [cyan]{note_path}[/cyan]")
+                
+                # Ask if user wants to open the new note
+                if click.confirm("Would you like to open the new daily note?", default=True):
+                    success, error = edit_file(note_path)
+                    if not success:
+                        console.print(f"[bold red]Error opening editor:[/bold red] {error}")
+                        return 1
+        
+        return 0
+        
+    except Exception as e:
+        console.print(f"[bold red]Error checking daily note:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+    
+@cli.command()
+@click.option("--date", "-d", help="Specific date for the daily note (YYYY-MM-DD). Defaults to today.")
+@click.option("--force", "-f", is_flag=True, help="Force creation even if a daily note already exists.")
+@click.option("--category", "-c", default="daily", help="Category for the daily note. Defaults to 'daily'.")
+@click.option("--tags", "-t", help="Additional tags for the note (comma-separated).")
+@click.option("--output-dir", "-o", help="Custom directory to save the note to. Overrides the default location.")
+@click.option("--editor", "-e", help="Specify which editor to use for editing the note (if opening for edit).")
+@click.option("--edit/--no-edit", default=True, help="Open the daily note for editing after creation.")
+@click.option("--template", default="daily", help="Template to use for the daily note. Defaults to 'daily'.")
+def daily(date, force, category, tags, output_dir, editor, edit, template):
+    """
+    Create or open a daily note.
+    
+    If no date is provided, today's date is used. If a daily note for the specified date already
+    exists, it will be opened for editing unless --force is used to create a new one.
+    """
+    try:
+        # Validate the specified editor if provided
+        if editor and not is_valid_editor(editor):
+            console.print(f"[bold red]Error:[/bold red] Specified editor '{editor}' not found or not executable")
+            return 1
+            
+        # Parse tags from comma-separated string
+        tag_list = []
+        if tags:
+            tag_list = [tag.strip() for tag in tags.split(',')]
+            
+        # Ensure "daily" is always included in tags
+        if "daily" not in tag_list:
+            tag_list.append("daily")
+            
+        # Create note manager
+        note_manager = NoteManager()
+        
+        # Determine the date to use
+        if date:
+            try:
+                specified_date = datetime.strptime(date, "%Y-%m-%d").date()
+                formatted_date = specified_date.strftime("%Y-%m-%d")
+            except ValueError:
+                console.print(f"[bold red]Error:[/bold red] Invalid date format: {date}. Expected format: YYYY-MM-DD")
+                return 1
+        else:
+            # Use today's date
+            specified_date = date.today()
+            formatted_date = specified_date.strftime("%Y-%m-%d")
+            
+        # Check if a daily note for this date already exists
+        existing_note = note_manager.find_daily_note(specified_date, category, output_dir)
+        
+        if existing_note and not force:
+            console.print(f"[blue]Daily note for {formatted_date} already exists.[/blue]")
+            note_path = existing_note.metadata.get('path', '')
+            
+            if edit:
+                console.print(f"Opening existing note: [cyan]{note_path}[/cyan]")
+                success, error = edit_file(note_path, custom_editor=editor)
+                
+                if not success:
+                    console.print(f"[bold red]Error opening editor:[/bold red] {error}")
+                    return 1
+            else:
+                console.print(f"Note path: [cyan]{note_path}[/cyan]")
+                
+            return 0
+            
+        # Additional metadata for the template
+        additional_metadata = {
+            "day_of_week": specified_date.strftime("%A")
+        }
+        
+        # Create a new daily note
+        success, message, note = note_manager.create_daily_note(
+            date_str=formatted_date,
+            tags=tag_list,
+            category=category,
+            template_name=template,
+            additional_metadata=additional_metadata,
+            output_dir=output_dir
+        )
+        
+        if not success:
+            console.print(f"[bold red]Error:[/bold red] {message}")
+            return 1
+            
+        console.print(f"[bold green]Success:[/bold green] {message}")
+        
+        note_path = note.metadata.get('path', '')
+        console.print(f"Note path: [cyan]{note_path}[/cyan]")
+        
+        # Open the note for editing if requested
+        if edit:
+            console.print(f"Opening note for editing...")
+            success, error = edit_file(note_path, custom_editor=editor)
+            
+            if not success:
+                console.print(f"[bold red]Error opening editor:[/bold red] {error}")
+                return 1
+                
+        return 0
+        
+    except Exception as e:
+        console.print(f"[bold red]Error creating daily note:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
 
 if __name__ == "__main__":
     cli()

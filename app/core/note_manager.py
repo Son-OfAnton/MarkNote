@@ -3,7 +3,7 @@ Core note management functionality for MarkNote.
 """
 import os
 from typing import List, Optional, Dict, Any, Set, Tuple
-from datetime import datetime
+from datetime import date, datetime
 import yaml
 from slugify import slugify
 
@@ -1059,3 +1059,151 @@ class NoteManager:
                 continue
 
         return matching_notes
+    
+    def create_daily_note(self, date_str: Optional[str] = None, 
+                          tags: List[str] = None,
+                          category: str = "daily",
+                          template_name: str = "daily",
+                          additional_metadata: Optional[Dict[str, Any]] = None,
+                          output_dir: Optional[str] = None) -> Tuple[bool, str, Any]:
+        """
+        Create a daily note for a specific date. If no date is provided, today's date is used.
+        
+        Args:
+            date_str: Optional date string in format 'YYYY-MM-DD'. If None, today's date is used.
+            tags: Optional list of tags for the note.
+            category: Category for the daily note. Defaults to "daily".
+            template_name: Template to use for the daily note. Defaults to "daily".
+            additional_metadata: Optional additional metadata for the frontmatter.
+            output_dir: Optional specific directory to save the note to.
+                        This overrides the notes_dir for this specific note.
+                        
+        Returns:
+            A tuple of (success, message, note_object) where success is a boolean,
+            message is a descriptive string, and note_object is the created Note
+            object or None if creation failed.
+        """
+        if tags is None:
+            tags = ["daily"]
+        elif "daily" not in tags:
+            tags.append("daily")
+            
+        if additional_metadata is None:
+            additional_metadata = {}
+            
+        # Determine the date to use
+        if date_str:
+            try:
+                # Parse the provided date string
+                parsed_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                return False, f"Invalid date format: {date_str}. Expected format: YYYY-MM-DD", None
+        else:
+            # Use today's date
+            parsed_date = date.today()
+            
+        # Format date for title and filename
+        formatted_date = parsed_date.strftime("%Y-%m-%d")
+        day_name = parsed_date.strftime("%A")
+        
+        # Create title in format "Daily Note: 2023-01-01 (Monday)"
+        title = f"Daily Note: {formatted_date} ({day_name})"
+        
+        # Check if a daily note for this date already exists
+        existing_note = self.find_daily_note(parsed_date, category, output_dir)
+        if existing_note:
+            return False, f"A daily note for {formatted_date} already exists.", existing_note
+            
+        # Add additional metadata for the daily note
+        additional_metadata["date"] = formatted_date
+        additional_metadata["day_of_week"] = day_name
+        
+        try:
+            # Create the note using the existing create_note method
+            note = self.create_note(
+                title=title,
+                template_name=template_name,
+                tags=tags,
+                category=category,
+                additional_metadata=additional_metadata,
+                output_dir=output_dir
+            )
+            return True, f"Daily note created for {formatted_date} ({day_name}).", note
+        except Exception as e:
+            return False, f"Error creating daily note: {str(e)}", None
+            
+    def find_daily_note(self, for_date: date, 
+                        category: Optional[str] = "daily",
+                        output_dir: Optional[str] = None) -> Any:
+        """
+        Find a daily note for the specified date, if it exists.
+        
+        Args:
+            for_date: The date to find a daily note for.
+            category: Category to look in. Defaults to "daily".
+            output_dir: Optional specific directory to look for the note.
+            
+        Returns:
+            The Note object if found, None otherwise.
+        """
+        formatted_date = for_date.strftime("%Y-%m-%d")
+        day_name = for_date.strftime("%A")
+        title = f"Daily Note: {formatted_date} ({day_name})"
+        
+        # Get filtered notes
+        notes = self.list_notes(tag="daily", category=category, output_dir=output_dir)
+        
+        # Look for a note matching the title
+        for note in notes:
+            if note.title == title:
+                return note
+                
+        # Also check with format variants (simpler matching)
+        alt_title_patterns = [
+            f"Daily Note: {formatted_date}",
+            f"{formatted_date} - Daily Note",
+            f"Daily - {formatted_date}"
+        ]
+        
+        for note in notes:
+            for pattern in alt_title_patterns:
+                if pattern in note.title:
+                    return note
+                    
+        # Check metadata 'date' field directly as a last resort
+        for note in notes:
+            if note.metadata.get('date') == formatted_date:
+                return note
+                
+        return None
+        
+    def get_todays_daily_note(self, 
+                            category: Optional[str] = "daily", 
+                            output_dir: Optional[str] = None) -> Tuple[bool, str, Any]:
+        """
+        Get today's daily note if it exists, or create it if it doesn't.
+        
+        Args:
+            category: Category for the daily note. Defaults to "daily".
+            output_dir: Optional specific directory.
+            
+        Returns:
+            A tuple containing (exists, message, note) where exists is True if the note
+            already existed, message is a descriptive string, and note is the Note object.
+        """
+        today = date.today()
+        
+        # Check if today's daily note already exists
+        existing_note = self.find_daily_note(today, category, output_dir)
+        
+        if existing_note:
+            return True, "Today's daily note already exists.", existing_note
+            
+        # If not, create a new daily note
+        success, message, note = self.create_daily_note(
+            date_str=None,  # Today by default
+            category=category,
+            output_dir=output_dir
+        )
+        
+        return False, message, note
