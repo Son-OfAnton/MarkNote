@@ -202,56 +202,6 @@ def new(title: str, template: str, tags: Optional[str], category: Optional[str],
         return 1
 
 @cli.command()
-@click.option("--tag", help="Filter notes by tag.")
-@click.option("--category", "-c", help="Filter notes by category.")
-@click.option("--output-dir", "-o", help="Custom directory to look for notes. Overrides the default location.")
-def list(tag, category, output_dir):
-    """List all notes, optionally filtered by tag or category."""
-    try:
-        note_manager = NoteManager()
-        notes = note_manager.list_notes(tag=tag, category=category, output_dir=output_dir)
-        
-        # Determine base directory for relative path display
-        base_dir = output_dir if output_dir else note_manager.notes_dir
-        
-        if not notes:
-            if tag or category or output_dir:
-                filters = []
-                if tag:
-                    filters.append(f"tag '{tag}'")
-                if category:
-                    filters.append(f"category '{category}'")
-                if output_dir:
-                    filters.append(f"directory '{output_dir}'")
-                filter_str = " and ".join(filters)
-                console.print(f"[yellow]No notes found matching {filter_str}.[/yellow]")
-            else:
-                console.print("[yellow]No notes found. Create one with 'marknote new'.[/yellow]")
-            return 0
-        
-        console.print(f"[bold blue]Found {len(notes)} notes:[/bold blue]")
-        
-        for note in notes:
-            path = note.metadata.get('path', '')
-            relative_path = os.path.relpath(path, base_dir) if path else ''
-            
-            # Format the note information
-            console.print(f"[bold cyan]{note.title}[/bold cyan]")
-            console.print(f"  [dim]File:[/dim] {relative_path}")
-            if note.category:
-                console.print(f"  [dim]Category:[/dim] {note.category}")
-            if note.tags:
-                console.print(f"  [dim]Tags:[/dim] {', '.join(note.tags)}")
-            console.print(f"  [dim]Updated:[/dim] {note.updated_at.strftime('%Y-%m-%d %H:%M')}")
-            console.print()
-            
-        return 0
-    
-    except Exception as e:
-        console.print(f"[bold red]Error listing notes:[/bold red] {str(e)}")
-        return 1
-
-@cli.command()
 @click.argument("query")
 @click.option("--output-dir", "-o", help="Custom directory to search in. Overrides the default location.")
 def search(query, output_dir):
@@ -743,214 +693,7 @@ def show_note_with_links(title, category, output_dir):
         console.print("[dim]No backlinks.[/dim]")
     
     return 0
-
-@click.command()
-@click.option("--tag", "-t", help="Filter notes by tag.")
-@click.option("--category", "-c", help="Filter notes by category.")
-@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
-@click.option("--sort", "-s", type=click.Choice(['date', 'title', 'links']), default='date',
-              help="Sort notes by date (default), title, or number of links.")
-@click.option("--show-links/--hide-links", default=True, help="Show link information in the listing.")
-@click.option("--detail", "-d", is_flag=True, help="Show more detailed information including snippets and all links.")
-def list_notes(tag: Optional[str], category: Optional[str], output_dir: Optional[str], 
-              sort: str, show_links: bool, detail: bool):
-    """List notes, optionally filtered by tag or category."""
-    note_manager = NoteManager()
-    
-    try:
-        # Get all notes based on filters
-        notes = note_manager.list_notes(tag=tag, category=category, output_dir=output_dir)
-        
-        if not notes:
-            if tag or category:
-                filters = []
-                if tag:
-                    filters.append(f"tag '{tag}'")
-                if category:
-                    filters.append(f"category '{category}'")
-                
-                console.print(f"[yellow]No notes found matching {' and '.join(filters)}.[/yellow]")
-            else:
-                console.print("[yellow]No notes found.[/yellow]")
-                
-                # If output directory is specified, show that
-                if output_dir:
-                    console.print(f"Directory: {output_dir}")
-            return 0
-        
-        # Sort notes based on the specified criteria
-        if sort == 'date':
-            # Default sort by updated_at (most recent first)
-            pass  # notes are already sorted by date
-        elif sort == 'title':
-            notes.sort(key=lambda x: x.title.lower())
-        elif sort == 'links':
-            # Sort by total links (outgoing + incoming)
-            # We need to find all backlinks first
-            notes_by_title = {note.title: note for note in notes}
-            backlink_counts: Dict[str, int] = {}
-            
-            # Count backlinks for each note
-            for note in notes:
-                for linked_title in note.get_links():
-                    if linked_title in backlink_counts:
-                        backlink_counts[linked_title] += 1
-                    else:
-                        backlink_counts[linked_title] = 1
-            
-            # Sort by total links (outgoing + incoming)
-            notes.sort(
-                key=lambda x: (len(x.get_links()) + backlink_counts.get(x.title, 0)),
-                reverse=True
-            )
-        
-        # If we're showing links, we need to calculate them
-        backlink_counts = {}
-        linked_to_notes = {}
-        note_titles = {note.title for note in notes}
-        
-        if show_links:
-            # Find all links between notes in the list
-            for note in notes:
-                outgoing_links = note.get_links()
-                
-                # Record backlinks
-                for linked_title in outgoing_links:
-                    if linked_title in note_titles:  # Only count links to notes in our list
-                        if linked_title in backlink_counts:
-                            backlink_counts[linked_title] += 1
-                        else:
-                            backlink_counts[linked_title] = 1
-                            
-                        # Record which notes link to which
-                        if linked_title not in linked_to_notes:
-                            linked_to_notes[linked_title] = []
-                        linked_to_notes[linked_title].append(note.title)
-        
-        # Create a table to display the notes
-        if detail:
-            # Detailed view with snippets and links
-            table = Table(title=f"Notes List ({len(notes)} notes)", expand=True)
-            table.add_column("Title", style="cyan", no_wrap=True)
-            table.add_column("Updated", style="green")
-            table.add_column("Category", style="yellow")
-            table.add_column("Tags", style="magenta")
-            
-            if show_links:
-                table.add_column("Links", justify="right", style="blue")
-                table.add_column("Linked From", justify="right", style="blue")
-                
-            table.add_column("Content Preview", style="dim", no_wrap=False)
-            
-            for note in notes:
-                # Process links if showing
-                links_cell = ""
-                linked_from_cell = ""
-                
-                if show_links:
-                    # Outgoing links
-                    outgoing_links = note.get_links()
-                    outgoing_in_list = [l for l in outgoing_links if l in note_titles]
-                    
-                    if outgoing_in_list:
-                        links_text = Text()
-                        for i, link in enumerate(outgoing_in_list):
-                            links_text.append(link, style="cyan")
-                            if i < len(outgoing_in_list) - 1:
-                                links_text.append(", ")
-                        links_cell = links_text
-                    else:
-                        links_cell = "None"
-                    
-                    # Incoming links (backlinks)
-                    if note.title in linked_to_notes:
-                        backlinks = linked_to_notes[note.title]
-                        backlinks_text = Text()
-                        for i, backlink in enumerate(backlinks):
-                            backlinks_text.append(backlink, style="cyan")
-                            if i < len(backlinks) - 1:
-                                backlinks_text.append(", ")
-                        linked_from_cell = backlinks_text
-                    else:
-                        linked_from_cell = "None"
-                
-                # Get content snippet
-                content_preview = note.content.strip().split('\n\n')[0]
-                if len(content_preview) > 100:
-                    content_preview = content_preview[:97] + "..."
-                
-                # Add the row
-                row = [
-                    note.title,
-                    note.updated_at.strftime("%Y-%m-%d %H:%M"),
-                    note.category or "None",
-                    ", ".join(note.tags) if note.tags else "None"
-                ]
-                
-                if show_links:
-                    row.extend([links_cell, linked_from_cell])
-                    
-                row.append(content_preview)
-                
-                table.add_row(*row)
-        
-        else:
-            # Compact view
-            table = Table(title=f"Notes List ({len(notes)} notes)")
-            table.add_column("Title", style="cyan", no_wrap=True)
-            table.add_column("Updated", style="green")
-            table.add_column("Category", style="yellow")
-            table.add_column("Tags", style="magenta")
-            
-            if show_links:
-                table.add_column("Links Out", justify="right", style="blue")
-                table.add_column("Links In", justify="right", style="blue")
-            
-            for note in notes:
-                # Get links count
-                outgoing_links = len([l for l in note.get_links() if l in note_titles])
-                incoming_links = backlink_counts.get(note.title, 0)
-                
-                # Add row
-                row = [
-                    note.title,
-                    note.updated_at.strftime("%Y-%m-%d"),
-                    note.category or "None",
-                    ", ".join(note.tags) if note.tags else "None"
-                ]
-                
-                if show_links:
-                    row.extend([
-                        str(outgoing_links) if outgoing_links else "0",
-                        str(incoming_links) if incoming_links else "0"
-                    ])
-                
-                table.add_row(*row)
-        
-        console.print(table)
-        
-        # Show filter information
-        if tag or category:
-            filters = []
-            if tag:
-                filters.append(f"tag: [yellow]{tag}[/yellow]")
-            if category:
-                filters.append(f"category: [yellow]{category}[/yellow]")
-            
-            console.print(f"Filtered by {', '.join(filters)}")
-        
-        # Show output directory if specified
-        if output_dir:
-            console.print(f"Directory: [dim]{output_dir}[/dim]")
-            
-        return 0
-        
-    except Exception as e:
-        console.print(f"[bold red]Error listing notes:[/bold red] {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return 1
-    
+   
 @click.group()
 def network():
     """Commands for analyzing note networks and connections."""
@@ -1190,6 +933,232 @@ def register_network_commands(cli):
     Register the network command group with the main CLI.
     """
     cli.add_command(network)
+
+
+@cli.command()
+@click.option("--tag", help="Filter notes by tag.")
+@click.option("--category", "-c", help="Filter notes by category.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes. Overrides the default location.")
+def list(tag, category, output_dir):
+    """List all notes, optionally filtered by tag or category."""
+    try:
+        note_manager = NoteManager()
+        notes = note_manager.list_notes(tag=tag, category=category, output_dir=output_dir)
+        
+        # Determine base directory for relative path display
+        base_dir = output_dir if output_dir else note_manager.notes_dir
+        
+        if not notes:
+            if tag or category or output_dir:
+                filters = []
+                if tag:
+                    filters.append(f"tag '{tag}'")
+                if category:
+                    filters.append(f"category '{category}'")
+                if output_dir:
+                    filters.append(f"directory '{output_dir}'")
+                filter_str = " and ".join(filters)
+                console.print(f"[yellow]No notes found matching {filter_str}.[/yellow]")
+            else:
+                console.print("[yellow]No notes found.[/yellow]")
+            return 0
+        
+        # Create a table for display
+        table = Table(title="Notes")
+        table.add_column("Title", style="cyan")
+        table.add_column("Tags")
+        table.add_column("Updated", style="green")
+        table.add_column("Category", style="magenta")
+        
+        for note in notes:
+            tags_display = ", ".join(note.tags) if note.tags else ""
+            updated_display = note.updated_at.strftime("%Y-%m-%d %H:%M")
+            category_display = note.category if note.category else ""
+            
+            table.add_row(
+                note.title,
+                tags_display,
+                updated_display,
+                category_display
+            )
+        
+        console.print(table)
+        
+    except Exception as e:
+        console.print(f"[bold red]Error listing notes:[/bold red] {str(e)}")
+        return 1
+    
+    return 0
+
+# Enhanced list command with more options
+@cli.command()
+@click.option("--tag", "-t", help="Filter notes by tag.")
+@click.option("--category", "-c", help="Filter notes by category.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--sort", "-s", type=click.Choice(['date', 'created', 'title', 'links']), default='date',
+              help="Sort notes by date modified (default), creation date, title, or number of links.")
+@click.option("--show-links/--hide-links", default=True, help="Show link information in the listing.")
+@click.option("--detail", "-d", is_flag=True, help="Show more detailed information including snippets and all links.")
+def list_notes(tag: Optional[str], category: Optional[str], output_dir: Optional[str], 
+              sort: str, show_links: bool, detail: bool):
+    """List notes, optionally filtered by tag or category."""
+    note_manager = NoteManager()
+    
+    try:
+        # Determine which sort parameter to use for NoteManager
+        sort_by = "updated"  # Default
+        if sort == 'created':
+            sort_by = "created"
+        elif sort == 'title':
+            sort_by = "title"
+        
+        # Get all notes based on filters
+        notes = note_manager.list_notes(
+            tag=tag, 
+            category=category, 
+            output_dir=output_dir,
+            sort_by=sort_by
+        )
+        
+        if not notes:
+            if tag or category:
+                filters = []
+                if tag:
+                    filters.append(f"tag '{tag}'")
+                if category:
+                    filters.append(f"category '{category}'")
+                
+                console.print(f"[yellow]No notes found matching {' and '.join(filters)}.[/yellow]")
+            else:
+                console.print("[yellow]No notes found.[/yellow]")
+                
+                # If output directory is specified, show that
+                if output_dir:
+                    console.print(f"Directory: {output_dir}")
+            return 0
+        
+        # If sort is 'links', we need a special sort that can't be done in NoteManager
+        if sort == 'links':
+            # Sort by total links (outgoing + incoming)
+            # We need to find all backlinks first
+            notes_by_title = {note.title: note for note in notes}
+            backlink_counts: Dict[str, int] = {}
+            
+            # Count backlinks for each note
+            for note in notes:
+                for linked_title in note.get_links():
+                    if linked_title in backlink_counts:
+                        backlink_counts[linked_title] += 1
+                    else:
+                        backlink_counts[linked_title] = 1
+            
+            # Sort by total links (outgoing + incoming)
+            notes.sort(
+                key=lambda x: (len(x.get_links()) + backlink_counts.get(x.title, 0)),
+                reverse=True
+            )
+        
+        # If we're showing links, we need to calculate them
+        backlink_counts = {}
+        linked_to_notes = {}
+        note_titles = {note.title for note in notes}
+        
+        if show_links:
+            # Find all links between notes in the list
+            for note in notes:
+                outgoing_links = note.get_links()
+                
+                # Record backlinks
+                for linked_title in outgoing_links:
+                    if linked_title in note_titles:  # Only count links to notes in our list
+                        if linked_title in backlink_counts:
+                            backlink_counts[linked_title] += 1
+                        else:
+                            backlink_counts[linked_title] = 1
+                            
+                        # Record which notes link to which
+                        if linked_title not in linked_to_notes:
+                            linked_to_notes[linked_title] = set()
+                        linked_to_notes[linked_title].add(note.title)
+        
+        # Create a table for display
+        table = Table(title="Notes")
+        
+        # Basic columns
+        table.add_column("Title", style="cyan")
+        table.add_column("Tags")
+        
+        # Show creation date if sorting by it
+        if sort == 'created':
+            table.add_column("Created", style="green")
+        else:
+            table.add_column("Updated", style="green")
+            
+        table.add_column("Category", style="magenta")
+        
+        # If showing links, add link columns
+        if show_links:
+            table.add_column("Links", justify="right", style="blue")
+            table.add_column("Backlinks", justify="right", style="blue")
+        
+        # Add rows to the table
+        for note in notes:
+            row = []
+            
+            # Title
+            row.append(note.title)
+            
+            # Tags
+            tags_display = ", ".join(note.tags) if note.tags else ""
+            row.append(tags_display)
+            
+            # Date
+            if sort == 'created':
+                date_display = note.created_at.strftime("%Y-%m-%d %H:%M")
+            else:
+                date_display = note.updated_at.strftime("%Y-%m-%d %H:%M")
+            row.append(date_display)
+            
+            # Category
+            category_display = note.category if note.category else ""
+            row.append(category_display)
+            
+            # Links info if enabled
+            if show_links:
+                outgoing_count = len(note.get_links())
+                incoming_count = backlink_counts.get(note.title, 0)
+                
+                row.append(str(outgoing_count))
+                row.append(str(incoming_count))
+            
+            table.add_row(*row)
+            
+            # If detail mode is on, show content snippet
+            if detail:
+                snippet = note.content[:100].replace('\n', ' ') + "..." if len(note.content) > 100 else note.content.replace('\n', ' ')
+                detail_table = Table(show_header=False, box=None, padding=(0, 2))
+                detail_table.add_row(f"  [dim]{snippet}[/dim]")
+                
+                # Show explicit links also
+                if show_links and note.get_links():
+                    link_text = "  [dim]Links to: " + ", ".join(note.get_links()) + "[/dim]"
+                    detail_table.add_row(link_text)
+                
+                # Show backlinks also
+                if show_links and note.title in linked_to_notes and linked_to_notes[note.title]:
+                    backlink_text = "  [dim]Linked from: " + ", ".join(linked_to_notes[note.title]) + "[/dim]"
+                    detail_table.add_row(backlink_text)
+                
+                table.add_row(detail_table)
+        
+        console.print(table)
+        console.print(f"[dim]Total: {len(notes)} notes[/dim]")
+        
+    except Exception as e:
+        console.print(f"[bold red]Error listing notes:[/bold red] {str(e)}")
+        return 1
+    
+    return 0
 
 
 # Register the link command group with the main CLI

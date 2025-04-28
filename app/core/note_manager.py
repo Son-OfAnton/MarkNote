@@ -473,152 +473,6 @@ class NoteManager:
         return self.update_note(title, new_content=new_content,
                                 category=category, output_dir=output_dir)
 
-    def list_notes(self, tag: Optional[str] = None,
-                   category: Optional[str] = None,
-                   output_dir: Optional[str] = None) -> List[Note]:
-        """
-        List notes, optionally filtered by tag or category.
-
-        Args:
-            tag: Optional tag to filter by.
-            category: Optional category to filter by.
-            output_dir: Optional specific directory to look for the notes.
-                        This overrides the notes_dir for this specific listing.
-
-        Returns:
-            A list of Note objects matching the criteria.
-        """
-        # Determine the directory to look for notes
-        if output_dir:
-            base_dir = os.path.expanduser(output_dir)
-            if not os.path.isabs(base_dir):
-                base_dir = os.path.abspath(base_dir)
-        else:
-            base_dir = self.notes_dir
-
-        # List of directories to search
-        dirs_to_search = []
-
-        if category:
-            # If category is specified, only search in that category
-            category_dir = os.path.join(base_dir, category)
-            if os.path.isdir(category_dir):
-                dirs_to_search.append(category_dir)
-        else:
-            # Otherwise, search in the main notes directory
-            dirs_to_search.append(base_dir)
-
-            # And all category subdirectories
-            if os.path.exists(base_dir):
-                for item in os.listdir(base_dir):
-                    item_path = os.path.join(base_dir, item)
-                    if os.path.isdir(item_path):
-                        dirs_to_search.append(item_path)
-
-        # Find all markdown files
-        markdown_files = []
-        for directory in dirs_to_search:
-            if os.path.exists(directory):
-                for file in os.listdir(directory):
-                    if file.endswith('.md'):
-                        markdown_files.append(os.path.join(directory, file))
-
-        # Load each note and filter by tag if needed
-        notes = []
-        for file_path in markdown_files:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            metadata, content_without_frontmatter = parse_frontmatter(content)
-
-            # Skip if tag filter is specified and note doesn't have the tag
-            if tag and tag not in metadata.get('tags', []):
-                continue
-
-            # Extract necessary data
-            title = metadata.get('title', os.path.basename(
-                file_path)[:-3])  # Remove .md
-
-            # Handle date parsing with error handling
-            try:
-                created_at = datetime.fromisoformat(
-                    metadata.get('created_at', datetime.now().isoformat()))
-            except (ValueError, TypeError):
-                created_at = datetime.now()
-
-            try:
-                updated_at = datetime.fromisoformat(
-                    metadata.get('updated_at', datetime.now().isoformat()))
-            except (ValueError, TypeError):
-                updated_at = datetime.now()
-
-            tags = metadata.get('tags', [])
-            note_category = metadata.get('category', None)
-
-            # Determine category from directory structure if not in metadata
-            if not note_category:
-                dir_name = os.path.basename(os.path.dirname(file_path))
-                if dir_name != os.path.basename(base_dir):
-                    note_category = dir_name
-
-            # Create note object
-            note = Note(
-                title=title,
-                content=content_without_frontmatter,
-                created_at=created_at,
-                updated_at=updated_at,
-                tags=tags,
-                category=note_category,
-                filename=os.path.basename(file_path),
-                metadata=metadata
-            )
-
-            # Set the full path on the note object
-            note.metadata['path'] = file_path
-
-            notes.append(note)
-
-        # Sort by updated_at, most recent first
-        notes.sort(key=lambda x: x.updated_at, reverse=True)
-
-        return notes
-
-    def search_notes(self, query: str, output_dir: Optional[str] = None) -> List[Note]:
-        """
-        Search for notes containing the query string.
-
-        Args:
-            query: The query string to search for.
-            output_dir: Optional specific directory to look for the notes.
-                        This overrides the notes_dir for this specific search.
-
-        Returns:
-            A list of Note objects matching the query.
-        """
-        # Get all notes
-        all_notes = self.list_notes(output_dir=output_dir)
-
-        # Filter notes by query string (case insensitive)
-        matching_notes = []
-        query = query.lower()
-
-        for note in all_notes:
-            # Check title
-            if query in note.title.lower():
-                matching_notes.append(note)
-                continue
-
-            # Check content
-            if query in note.content.lower():
-                matching_notes.append(note)
-                continue
-
-            # Check tags
-            if any(query in tag.lower() for tag in note.tags):
-                matching_notes.append(note)
-                continue
-
-        return matching_notes
 
     def add_link_between_notes(self, source_title: str, target_title: str,
                                bidirectional: bool = False,
@@ -1049,3 +903,158 @@ class NoteManager:
                 standalone_notes.append(note)
         
         return standalone_notes
+    
+    def list_notes(self, tag: Optional[str] = None,
+                   category: Optional[str] = None,
+                   output_dir: Optional[str] = None,
+                   sort_by: str = "updated") -> List[Note]:
+        """
+        List notes, optionally filtered by tag or category.
+
+        Args:
+            tag: Optional tag to filter by.
+            category: Optional category to filter by.
+            output_dir: Optional specific directory to look for the notes.
+                        This overrides the notes_dir for this specific listing.
+            sort_by: Sorting method - "updated" (default), "created", or "title"
+
+        Returns:
+            A list of Note objects matching the criteria.
+        """
+        # Determine the directory to look for notes
+        if output_dir:
+            base_dir = os.path.expanduser(output_dir)
+            if not os.path.isabs(base_dir):
+                base_dir = os.path.abspath(base_dir)
+        else:
+            base_dir = self.notes_dir
+
+        # List of directories to search
+        dirs_to_search = []
+
+        if category:
+            # If category is specified, only search in that category
+            category_dir = os.path.join(base_dir, category)
+            if os.path.isdir(category_dir):
+                dirs_to_search.append(category_dir)
+        else:
+            # Otherwise, search in the main notes directory
+            dirs_to_search.append(base_dir)
+
+            # And all category subdirectories
+            if os.path.exists(base_dir):
+                for item in os.listdir(base_dir):
+                    item_path = os.path.join(base_dir, item)
+                    if os.path.isdir(item_path):
+                        dirs_to_search.append(item_path)
+
+        # Find all markdown files
+        markdown_files = []
+        for directory in dirs_to_search:
+            if os.path.exists(directory):
+                for file in os.listdir(directory):
+                    if file.endswith('.md'):
+                        markdown_files.append(os.path.join(directory, file))
+
+        # Load each note and filter by tag if needed
+        notes = []
+        for file_path in markdown_files:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            metadata, content_without_frontmatter = parse_frontmatter(content)
+
+            # Skip if tag filter is specified and note doesn't have the tag
+            if tag and tag not in metadata.get('tags', []):
+                continue
+
+            # Extract necessary data
+            title = metadata.get('title', os.path.basename(
+                file_path)[:-3])  # Remove .md
+
+            # Handle date parsing with error handling
+            try:
+                created_at = datetime.fromisoformat(
+                    metadata.get('created_at', datetime.now().isoformat()))
+            except (ValueError, TypeError):
+                created_at = datetime.now()
+
+            try:
+                updated_at = datetime.fromisoformat(
+                    metadata.get('updated_at', datetime.now().isoformat()))
+            except (ValueError, TypeError):
+                updated_at = datetime.now()
+
+            tags = metadata.get('tags', [])
+            note_category = metadata.get('category', None)
+
+            # Determine category from directory structure if not in metadata
+            if not note_category:
+                dir_name = os.path.basename(os.path.dirname(file_path))
+                if dir_name != os.path.basename(base_dir):
+                    note_category = dir_name
+
+            # Create note object
+            note = Note(
+                title=title,
+                content=content_without_frontmatter,
+                created_at=created_at,
+                updated_at=updated_at,
+                tags=tags,
+                category=note_category,
+                filename=os.path.basename(file_path),
+                metadata=metadata
+            )
+
+            # Set the full path on the note object
+            note.metadata['path'] = file_path
+
+            notes.append(note)
+
+        # Sort notes based on the specified sort_by parameter
+        if sort_by == "updated":
+            notes.sort(key=lambda x: x.updated_at, reverse=True)
+        elif sort_by == "created":
+            notes.sort(key=lambda x: x.created_at, reverse=True)
+        elif sort_by == "title":
+            notes.sort(key=lambda x: x.title.lower())
+        # Add other sorting options here if needed
+
+        return notes
+
+    def search_notes(self, query: str, output_dir: Optional[str] = None) -> List[Note]:
+        """
+        Search for notes containing the query string.
+
+        Args:
+            query: The query string to search for.
+            output_dir: Optional specific directory to look for the notes.
+                        This overrides the notes_dir for this specific search.
+
+        Returns:
+            A list of Note objects matching the query.
+        """
+        # Get all notes
+        all_notes = self.list_notes(output_dir=output_dir)
+
+        # Filter notes by query string (case insensitive)
+        matching_notes = []
+        query = query.lower()
+
+        for note in all_notes:
+            # Check title
+            if query in note.title.lower():
+                matching_notes.append(note)
+                continue
+
+            # Check tags
+            if any(query in tag.lower() for tag in note.tags):
+                matching_notes.append(note)
+                continue
+
+            # Check content
+            if query in note.content.lower():
+                matching_notes.append(note)
+                continue
+
+        return matching_notes
