@@ -5,6 +5,9 @@ from datetime import date, datetime
 import os
 import sys
 from typing import Dict, List, Optional, Tuple
+from datetime import date as dt
+
+
 import click
 from rich.console import Console
 from rich.panel import Panel
@@ -1069,8 +1072,8 @@ def daily(date, force, category, tags, output_dir, editor, edit, template):
                 auto_open=edit
             )
         else:
-            # Today's date
-            today_str = date_str = date.today().strftime("%Y-%m-%d")
+            # Today's date - Use dt.today() instead of date.today() to avoid name collision
+            today_str = dt.today().strftime("%Y-%m-%d")
             
             if force:
                 # Force create a new note for today
@@ -1108,6 +1111,8 @@ def daily(date, force, category, tags, output_dir, editor, edit, template):
         
     except Exception as e:
         console.print(f"[bold red]Error creating daily note:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
         return 1
 
 @cli.command()
@@ -1135,8 +1140,8 @@ def today(category, output_dir):
         
         if exists:
             note_path = note.metadata.get('path', '')
-            date_str = note.metadata.get('date', date.today().strftime("%Y-%m-%d"))
-            day_str = note.metadata.get('day_of_week', date.today().strftime("%A"))
+            date_str = note.metadata.get('date', dt.today().strftime("%Y-%m-%d"))
+            day_str = note.metadata.get('day_of_week', dt.today().strftime("%A"))
             
             console.print(Panel(
                 f"[bold]Today's Daily Note[/bold]\n\n"
@@ -1156,7 +1161,7 @@ def today(category, output_dir):
                     return 1
         else:
             # Note doesn't exist yet
-            today_date = date.today()
+            today_date = dt.today()
             formatted_date = today_date.strftime("%Y-%m-%d")
             day_name = today_date.strftime("%A")
             
@@ -1185,6 +1190,8 @@ def today(category, output_dir):
         
     except Exception as e:
         console.print(f"[bold red]Error checking daily note:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
         return 1
 
 @cli.group(name="config")

@@ -3,7 +3,7 @@ Core note management functionality for MarkNote.
 """
 import os
 from typing import List, Optional, Dict, Any, Set, Tuple
-from datetime import date, datetime
+from datetime import date as dt, datetime
 import yaml
 from slugify import slugify
 
@@ -1059,7 +1059,7 @@ class NoteManager:
                 continue
 
         return matching_notes
-    
+
     def create_daily_note(self, date_str: Optional[str] = None, 
                           tags: List[str] = None,
                           category: str = "daily",
@@ -1099,8 +1099,8 @@ class NoteManager:
             except ValueError:
                 return False, f"Invalid date format: {date_str}. Expected format: YYYY-MM-DD", None
         else:
-            # Use today's date
-            parsed_date = date.today()
+            # Use today's date - using dt.today() instead of date.today() to avoid name collision
+            parsed_date = dt.today()
             
         # Format date for title and filename
         formatted_date = parsed_date.strftime("%Y-%m-%d")
@@ -1132,7 +1132,7 @@ class NoteManager:
         except Exception as e:
             return False, f"Error creating daily note: {str(e)}", None
             
-    def find_daily_note(self, for_date: date, 
+    def find_daily_note(self, for_date: dt, 
                         category: Optional[str] = "daily",
                         output_dir: Optional[str] = None) -> Any:
         """
@@ -1191,7 +1191,8 @@ class NoteManager:
             A tuple containing (exists, message, note) where exists is True if the note
             already existed, message is a descriptive string, and note is the Note object.
         """
-        today = date.today()
+        # Use dt.today() instead of date.today() to avoid name collision
+        today = dt.today()
         
         # Check if today's daily note already exists
         existing_note = self.find_daily_note(today, category, output_dir)
