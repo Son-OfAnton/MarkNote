@@ -1250,6 +1250,209 @@ def config_daily(template, category, auto_open):
     except Exception as e:
         console.print(f"[bold red]Error configuring daily notes:[/bold red] {str(e)}")
         return 1
+    
+
+console = Console()
+
+@click.group(name="version")
+def version_group():
+    """Commands for managing note version history."""
+    pass
+
+
+@version_group.command(name="list")
+@click.argument("title")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes. Overrides the default location.")
+def version_list(title: str, category: Optional[str], output_dir: Optional[str]):
+    """
+    List version history for a note.
+    
+    TITLE is the title of the note to show version history for.
+    """
+    note_manager = NoteManager()
+    
+    # Get version history
+    success, message, versions = note_manager.get_note_version_history(
+        title, category, output_dir
+    )
+    
+    if not success:
+        console.print(f"[bold red]Error:[/bold red] {message}")
+        return 1
+        
+    if not versions:
+        console.print(f"[yellow]No version history found for note: {title}[/yellow]")
+        return 0
+        
+    # Create a table to display versions
+    table = Table(title=f"Version History for: {title}")
+    
+    table.add_column("Version", style="cyan")
+    table.add_column("Date", style="green")
+    table.add_column("Author")
+    table.add_column("Message")
+    
+    # Add rows for each version
+    for version in versions:
+        # Format the timestamp
+        try:
+            timestamp = datetime.fromisoformat(version["timestamp"])
+            date_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            date_str = version["timestamp"]
+            
+        table.add_row(
+            version["version_id"],
+            date_str,
+            version["author"],
+            Text(version["message"], overflow="ellipsis")
+        )
+        
+    console.print(table)
+    
+    # Print info about how to view specific versions
+    console.print("\n[dim]To view a specific version:[/dim]")
+    console.print(f"[dim]  marknote version show {title} <version_id>[/dim]")
+    
+    # Print info about how to compare versions
+    console.print("\n[dim]To compare versions:[/dim]")
+    console.print(f"[dim]  marknote version diff {title} <old_version_id> <new_version_id>[/dim]")
+    
+    return 0
+
+
+@version_group.command(name="show")
+@click.argument("title")
+@click.argument("version_id")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes. Overrides the default location.")
+@click.option("--raw", is_flag=True, help="Show raw content without syntax highlighting.")
+def version_show(title: str, version_id: str, category: Optional[str], 
+                 output_dir: Optional[str], raw: bool):
+    """
+    Show a specific version of a note.
+    
+    TITLE is the title of the note.
+    VERSION_ID is the ID of the version to show.
+    """
+    note_manager = NoteManager()
+    
+    # Get specific version
+    success, message, content = note_manager.get_note_version(
+        title, version_id, category, output_dir
+    )
+    
+    if not success:
+        console.print(f"[bold red]Error:[/bold red] {message}")
+        return 1
+        
+    if raw:
+        # Print raw content
+        console.print(content)
+    else:
+        # Display with syntax highlighting
+        syntax = Syntax(content, "markdown", theme="monokai", line_numbers=True)
+        console.print(Panel(
+            syntax,
+            title=f"{title} - Version {version_id}",
+            expand=False
+        ))
+    
+    return 0
+
+
+@version_group.command(name="diff")
+@click.argument("title")
+@click.argument("old_version_id")
+@click.argument("new_version_id", required=False)
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes. Overrides the default location.")
+def version_diff(title: str, old_version_id: str, new_version_id: Optional[str],
+                 category: Optional[str], output_dir: Optional[str]):
+    """
+    Compare two versions of a note.
+    
+    TITLE is the title of the note.
+    OLD_VERSION_ID is the ID of the older version to compare.
+    NEW_VERSION_ID is the ID of the newer version to compare. If not provided, compares with latest version.
+    """
+    note_manager = NoteManager()
+    
+    # Compare versions
+    success, message, diff_lines = note_manager.compare_note_versions(
+        title, old_version_id, new_version_id, category, output_dir
+    )
+    
+    if not success:
+        console.print(f"[bold red]Error:[/bold red] {message}")
+        return 1
+        
+    # Show diff with colors
+    for line in diff_lines:
+        if line.startswith('+'):
+            console.print(f"[green]{line}[/green]")
+        elif line.startswith('-'):
+            console.print(f"[red]{line}[/red]")
+        elif line.startswith('?'):
+            # Skip ? lines as they're just indicators for context
+            pass
+        else:
+            console.print(line)
+    
+    return 0
+
+
+@version_group.command(name="restore")
+@click.argument("title")
+@click.argument("version_id")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes. Overrides the default location.")
+@click.option("--force", "-f", is_flag=True, help="Force restore without confirmation.")
+def version_restore(title: str, version_id: str, category: Optional[str],
+                    output_dir: Optional[str], force: bool):
+    """
+    Restore a note to a specific version.
+    
+    TITLE is the title of the note.
+    VERSION_ID is the ID of the version to restore.
+    """
+    note_manager = NoteManager()
+    
+    # Confirm restoration unless force is specified
+    if not force:
+        console 
+        
+        console.print(
+            f"[yellow]Warning:[/yellow] This will overwrite the current version of '{title}'."
+        )
+        confirm = click.confirm("Do you want to continue?")
+        if not confirm:
+            console.print("Restoration cancelled.")
+            return 0
+    
+    # Restore version
+    success, message, restored_note = note_manager.restore_note_version(
+        title, version_id, category, output_dir
+    )
+    
+    if not success:
+        console.print(f"[bold red]Error:[/bold red] {message}")
+        return 1
+        
+    console.print(f"[bold green]Success:[/bold green] {message}")
+    
+    # Show path to the restored note
+    note_path = restored_note.metadata.get('path', '')
+    if note_path:
+        console.print(f"Note restored: [cyan]{note_path}[/cyan]")
+    
+    return 0
+
+
+def register_version_commands(cli_group):
+    """Register version commands with the main CLI group."""
+    cli_group.add_command(version_group)
 
 if __name__ == "__main__":
     cli()
