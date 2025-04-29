@@ -63,7 +63,7 @@ marknote link add "Source Note" "Target Note" --bidirectional --category sourceC
 # Remove a link
 marknote link remove "Source Note" "Target Note" --bidirectional --category sourceCat --target-category targetCat --output-dir ~/notes
 
-# List links from a note (use --backlinks to show incoming links)
+# List links (use --backlinks to show incoming links)
 marknote link list "Note Title" --category work --output-dir ~/notes --backlinks
 
 # Show orphaned links (links pointing to non-existent notes)
@@ -81,6 +81,35 @@ marknote network standalone --output-dir ~/notes
 
 # Find the shortest path between two notes
 marknote network path "Source Note" "Target Note" --category sourceCat --target-category targetCat --output-dir ~/notes --max-depth 5
+
+### Daily Commands
+# Create or open a daily note
+marknote daily [options]
+
+# Show today's daily note status (and optionally open it)
+marknote today [options]
+
+# Configure daily note settings
+marknote config daily [options]
+
+### Version Commands
+# List all versions of a note
+marknote versions list "Note Title" [options]
+
+# Show a specific version
+marknote versions show "Note Title" "version_id" [options]
+
+# Show differences between two versions
+marknote versions diff "Note Title" "from_version" "to_version" [options]
+
+# Restore a note to a previous version
+marknote versions restore "Note Title" "version_id" [options]
+
+# Purge version history for a note
+marknote versions purge "Note Title" [options]
+
+# Show version control status
+marknote versions status
 
 ## Development
 
@@ -100,13 +129,15 @@ mypy .
 
 ## Project Structure
 
-Below is the project folder structure:
 ```
 MarkNote/
 ├── app/
 │   ├── cli/
 │   │   └── commands.py
+│   ├── config/
+│   │   └── config_manager.py
 │   ├── core/
+│   │   ├── daily_note_service.py
 │   │   └── note_manager.py
 │   ├── models/
 │   │   └── note.py
