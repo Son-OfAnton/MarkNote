@@ -1835,6 +1835,86 @@ def version_status():
         return 1
 
 
+@versions.command(name="create")
+@click.argument("title")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--message", "-m", help="Message describing this version.")
+@click.option("--author", "-a", help="Author of this version.")
+def create_version(title: str, category: Optional[str], output_dir: Optional[str],
+                   message: Optional[str], author: Optional[str]):
+    """
+    Manually create a new version of an existing note.
+
+    TITLE is the title of the note.
+    """
+    try:
+        # Create note manager
+        note_manager = create_note_manager()
+        if not note_manager:
+            return 1
+
+        # Check if needed method exists
+        if not hasattr(note_manager, 'create_version'):
+            console.print(
+                "[bold red]Error:[/bold red] Version creation functionality is not available.")
+            console.print(
+                "Make sure you have the latest version of MarkNote with version control support.")
+            return 1
+
+        # Use version_control_enabled check from note_manager if available
+        if hasattr(note_manager, 'version_control_enabled') and not note_manager.version_control_enabled:
+            console.print(
+                "[bold red]Error:[/bold red] Version control is not enabled.")
+            return 1
+
+        console.print(f"Creating version for note: [cyan]{title}[/cyan]")
+
+        # Create the version
+        success, msg, version_id = note_manager.create_version(
+            title=title,
+            category=category,
+            output_dir=output_dir,
+            message=message,
+            author=author
+        )
+
+        if not success:
+            console.print(f"[bold red]Error:[/bold red] {msg}")
+            return 1
+
+        console.print(f"[bold green]Success:[/bold green] {msg}")
+
+        # Get version details
+        history_success, _, versions = note_manager.get_note_version_history(
+            title=title,
+            category=category,
+            output_dir=output_dir
+        )
+
+        if history_success and versions:
+            # Find the newly created version
+            new_version = next(
+                (v for v in versions if v["version_id"] == version_id), None)
+            if new_version:
+                # Show version details in a panel
+                panel = Panel(
+                    f"[bold]Version ID:[/bold] {new_version['version_id']}\n"
+                    f"[bold]Created:[/bold] {new_version['timestamp']}\n"
+                    f"[bold]Author:[/bold] {new_version['author']}\n"
+                    f"[bold]Message:[/bold] {new_version['message']}",
+                    title="Version Details",
+                    border_style="green"
+                )
+                console.print(panel)
+
+        return 0
+
+    except Exception as e:
+        console.print(f"[bold red]Error creating version:[/bold red] {str(e)}")
+        return 1
+
+
 def register_version_commands(cli_group):
     """Register version commands with the main CLI group."""
     cli_group.add_command(versions)

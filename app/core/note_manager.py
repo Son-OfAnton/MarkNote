@@ -18,6 +18,7 @@ from app.utils.file_handler import (
     write_note_file,
 )
 from app.utils.template_manager import TemplateManager
+from app.utils.version_control import VersionControlManager
 
 
 class NoteManager:
@@ -25,16 +26,70 @@ class NoteManager:
     Manages notes in the filesystem.
     """
 
-    def __init__(self, notes_dir: Optional[str] = None):
+    def __init__(self, notes_dir: Optional[str] = None, enable_version_control: bool = True):
         """
         Initialize the NoteManager with the specified notes directory.
 
         Args:
             notes_dir: Optional custom directory path for storing notes.
                       If not provided, the default directory will be used.
+            enable_version_control: Whether to enable version control.
         """
         self.notes_dir = ensure_notes_dir(notes_dir)
         self.template_manager = TemplateManager()
+
+        # Initialize version control
+        self.version_control_enabled = enable_version_control
+        if self.version_control_enabled:
+            self.version_manager = VersionControlManager()
+
+    # Copy your create_version method here - you'll add the rest of the class below
+    def create_version(self, title: str, category: Optional[str] = None,
+                       output_dir: Optional[str] = None,
+                       message: Optional[str] = None,
+                       author: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
+        """
+        Manually create a new version of an existing note.
+
+        Args:
+            title: The title of the note.
+            category: Optional category to help find the note.
+            output_dir: Optional specific directory to look for the note.
+            message: Optional message describing this version.
+            author: Optional author of the version.
+
+        Returns:
+            A tuple of (success, message, version_id).
+        """
+        if not self.version_control_enabled:
+            return False, "Version control is not enabled.", None
+
+        # Find the note
+        note_path = self.find_note_path(title, category, output_dir)
+        if not note_path:
+            return False, f"Note '{title}' not found.", None
+
+        try:
+            # Read the current note content
+            metadata, content = read_note_file(note_path)
+
+            # Create a version ID
+            note_id = self.version_manager.generate_note_id(note_path, title)
+            full_content = self._get_full_note_content(metadata, content)
+
+            # Save the version
+            version_id = self.version_manager.save_version(
+                note_id,
+                full_content,
+                title,
+                author,
+                message or f"Manual version created for: {title}"
+            )
+
+            return True, f"Version {version_id} created successfully.", version_id
+
+        except Exception as e:
+            return False, f"Error creating version: {str(e)}", None
 
     def create_note(self, title: str, template_name: str = "default",
                     content: str = "", tags: List[str] = None,
@@ -201,15 +256,15 @@ class NoteManager:
         return None
 
     def update_note(self, title: str, new_content: Optional[str] = None,
-                   new_tags: Optional[List[str]] = None,
-                   new_category: Optional[str] = None,
-                   additional_metadata: Optional[Dict[str, Any]] = None,
-                   output_dir: Optional[str] = None,
-                   commit_message: Optional[str] = None,
-                   author: Optional[str] = None) -> Tuple[bool, str, Optional[Note]]:
+                    new_tags: Optional[List[str]] = None,
+                    new_category: Optional[str] = None,
+                    additional_metadata: Optional[Dict[str, Any]] = None,
+                    output_dir: Optional[str] = None,
+                    commit_message: Optional[str] = None,
+                    author: Optional[str] = None) -> Tuple[bool, str, Optional[Note]]:
         """
         Update an existing note and save the change in version history.
-        
+
         Args:
             All existing parameters, plus:
             commit_message: Optional message describing the change
@@ -217,22 +272,22 @@ class NoteManager:
         """
         # Call the original update_note method
         # For this example, we'll simulate the result
-        
+
         # Find the note
         note_path = self.find_note_path(title, new_category, output_dir)
         if not note_path:
             return False, f"Note '{title}' not found.", None
-        
+
         # Get existing content
         try:
             metadata, content = read_note_file(note_path)
         except Exception as e:
             return False, f"Error reading note: {str(e)}", None
-        
+
         # Update content
         if new_content is not None:
             content = new_content
-            
+
         # Update metadata
         if new_tags is not None:
             metadata['tags'] = new_tags
@@ -241,51 +296,53 @@ class NoteManager:
         if additional_metadata is not None:
             for key, value in additional_metadata.items():
                 metadata[key] = value
-                
+
         # Update the updated_at timestamp
         metadata['updated_at'] = datetime.now().isoformat()
-        
+
         # Create a Note object
         note = Note(
             title=metadata.get('title', title),
             content=content,
-            created_at=datetime.fromisoformat(metadata.get('created_at', datetime.now().isoformat())),
+            created_at=datetime.fromisoformat(metadata.get(
+                'created_at', datetime.now().isoformat())),
             updated_at=datetime.fromisoformat(metadata.get('updated_at')),
             tags=metadata.get('tags', []),
             category=metadata.get('category', None),
             filename=os.path.basename(note_path),
             metadata=metadata
         )
-        
+
         # Save the updated note
         try:
             write_note_file(note_path, metadata, content)
-            
+
             # Save to version control if enabled
             if self.version_control_enabled:
-                note_id = self.version_manager.generate_note_id(note_path, title)
+                note_id = self.version_manager.generate_note_id(
+                    note_path, title)
                 full_content = self._get_full_note_content(metadata, content)
                 self.version_manager.save_version(
-                    note_id, 
+                    note_id,
                     full_content,
                     title,
                     author,
                     commit_message or f"Update note: {title}"
                 )
-                
+
             return True, "Note updated successfully.", note
-            
+
         except Exception as e:
             return False, f"Error updating note: {str(e)}", None
-        
+
     def _get_full_note_content(self, metadata: Dict[str, Any], content: str) -> str:
         """
         Get the full note content including frontmatter.
-        
+
         Args:
             metadata: The note metadata
             content: The note content
-            
+
         Returns:
             The full note content
         """
@@ -299,7 +356,7 @@ class NoteManager:
             else:
                 frontmatter += f"{key}: {value}\n"
         frontmatter += "---\n\n"
-        
+
         return frontmatter + content
 
     def get_note(self, title: str, category: Optional[str] = None,
@@ -391,7 +448,6 @@ class NoteManager:
         """
         return self.update_note(title, new_content=new_content,
                                 category=category, output_dir=output_dir)
-
 
     def add_link_between_notes(self, source_title: str, target_title: str,
                                bidirectional: bool = False,
@@ -674,14 +730,13 @@ class NoteManager:
 
         return note, linked_notes, backlinks
 
-
     def generate_link_graph(self, output_dir: Optional[str] = None) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]]]:
         """
         Generate a graph of all links between notes.
-        
+
         Args:
             output_dir: Optional directory to look for notes.
-            
+
         Returns:
             A tuple of (outgoing_links, incoming_links) dictionaries.
             - outgoing_links maps note titles to sets of linked note titles
@@ -689,21 +744,21 @@ class NoteManager:
         """
         # Get all notes
         all_notes = self.list_notes(output_dir=output_dir)
-        
+
         # Create the link graphs
         outgoing_links: Dict[str, Set[str]] = {}
         incoming_links: Dict[str, Set[str]] = {}
-        
+
         # Initialize graph with all notes (even those without links)
         for note in all_notes:
             outgoing_links[note.title] = set()
             incoming_links[note.title] = set()
-        
+
         # Populate outgoing and incoming links
         for note in all_notes:
             if hasattr(note, 'linked_notes') and note.linked_notes:
                 outgoing_links[note.title] = set(note.linked_notes)
-                
+
                 # Update the incoming links for each linked note
                 for linked_title in note.linked_notes:
                     if linked_title in incoming_links:
@@ -711,85 +766,87 @@ class NoteManager:
                     else:
                         # If it's a link to a note we haven't seen yet
                         incoming_links[linked_title] = {note.title}
-        
+
         return outgoing_links, incoming_links
 
     def get_linked_notes_stats(self, output_dir: Optional[str] = None) -> Dict[str, Tuple[int, int, List[str], List[str]]]:
         """
         Get statistics about links between notes.
-        
+
         Args:
             output_dir: Optional directory to look for notes.
-            
+
         Returns:
             A dictionary mapping note titles to tuples of:
             (outgoing link count, incoming link count, outgoing link titles, incoming link titles)
         """
-        outgoing_links, incoming_links = self.generate_link_graph(output_dir=output_dir)
-        
+        outgoing_links, incoming_links = self.generate_link_graph(
+            output_dir=output_dir)
+
         link_stats = {}
-        
+
         # For each note, compile its statistics
         for title in outgoing_links:
             out_links = list(outgoing_links[title])
             in_links = list(incoming_links.get(title, set()))
-            
+
             link_stats[title] = (
                 len(out_links),  # Outgoing link count
                 len(in_links),   # Incoming link count
                 out_links,       # List of outgoing link titles
                 in_links         # List of incoming link titles
             )
-        
+
         # Also include notes that only have incoming links
         for title in incoming_links:
             if title not in link_stats:
                 in_links = list(incoming_links[title])
                 link_stats[title] = (0, len(in_links), [], in_links)
-        
+
         return link_stats
 
     def find_most_linked_notes(self, output_dir: Optional[str] = None, limit: int = 10) -> List[Tuple[str, int, int]]:
         """
         Find the most connected notes in the network.
-        
+
         Args:
             output_dir: Optional directory to look for notes.
             limit: Maximum number of notes to return.
-            
+
         Returns:
             A list of tuples (note_title, outgoing_links, incoming_links) sorted by total links.
         """
         link_stats = self.get_linked_notes_stats(output_dir=output_dir)
-        
+
         # Sort by total links (outgoing + incoming)
         sorted_stats = sorted(
-            [(title, stats[0], stats[1]) for title, stats in link_stats.items()],
+            [(title, stats[0], stats[1])
+             for title, stats in link_stats.items()],
             key=lambda x: x[1] + x[2],  # Sort by sum of outgoing and incoming
             reverse=True  # Most linked first
         )
-        
+
         return sorted_stats[:limit]
 
     def find_orphaned_links(self, output_dir: Optional[str] = None) -> List[Tuple[Note, Set[str]]]:
         """
         Find all orphaned links (links to notes that don't exist).
-        
+
         Args:
             output_dir: Optional directory to look for notes.
-                
+
         Returns:
             A list of tuples (note, set of orphaned link titles).
         """
         # Get all notes
         all_notes = self.list_notes(output_dir=output_dir)
-        
+
         # Create a set of all note titles
         all_titles = {note.title for note in all_notes}
-        
+
         # Find orphaned links
         orphaned_links = []
-        
+
         for note in all_notes:
             linked_titles = note.get_links()
             if linked_titles:
@@ -797,33 +854,33 @@ class NoteManager:
                 missing_links = linked_titles - all_titles
                 if missing_links:
                     orphaned_links.append((note, missing_links))
-        
+
         return orphaned_links
 
     def find_standalone_notes(self, output_dir: Optional[str] = None) -> List[Note]:
         """
         Find notes that have no links to or from other notes.
-        
+
         Args:
             output_dir: Optional directory to look for notes.
-            
+
         Returns:
             A list of standalone notes.
         """
-        outgoing_links, incoming_links = self.generate_link_graph(output_dir=output_dir)
+        outgoing_links, incoming_links = self.generate_link_graph(
+            output_dir=output_dir)
         all_notes = self.list_notes(output_dir=output_dir)
-        
+
         standalone_notes = []
-        
+
         for note in all_notes:
             # Check if the note has any outgoing or incoming links
-            if (not outgoing_links.get(note.title) and 
-                not incoming_links.get(note.title)):
+            if (not outgoing_links.get(note.title) and
+                    not incoming_links.get(note.title)):
                 standalone_notes.append(note)
-        
+
         return standalone_notes
-    
-    
+
     def list_notes(self, tag: Optional[str] = None,
                    category: Optional[str] = None,
                    output_dir: Optional[str] = None,
@@ -979,7 +1036,7 @@ class NoteManager:
 
         return matching_notes
 
-    def create_daily_note(self, date_str: Optional[str] = None, 
+    def create_daily_note(self, date_str: Optional[str] = None,
                           tags: List[str] = None,
                           category: str = "daily",
                           template_name: str = "daily",
@@ -987,7 +1044,7 @@ class NoteManager:
                           output_dir: Optional[str] = None) -> Tuple[bool, str, Any]:
         """
         Create a daily note for a specific date. If no date is provided, today's date is used.
-        
+
         Args:
             date_str: Optional date string in format 'YYYY-MM-DD'. If None, today's date is used.
             tags: Optional list of tags for the note.
@@ -996,7 +1053,7 @@ class NoteManager:
             additional_metadata: Optional additional metadata for the frontmatter.
             output_dir: Optional specific directory to save the note to.
                         This overrides the notes_dir for this specific note.
-                        
+
         Returns:
             A tuple of (success, message, note_object) where success is a boolean,
             message is a descriptive string, and note_object is the created Note
@@ -1006,10 +1063,10 @@ class NoteManager:
             tags = ["daily"]
         elif "daily" not in tags:
             tags.append("daily")
-            
+
         if additional_metadata is None:
             additional_metadata = {}
-            
+
         # Determine the date to use
         if date_str:
             try:
@@ -1020,23 +1077,23 @@ class NoteManager:
         else:
             # Use today's date - using dt.today() instead of date.today() to avoid name collision
             parsed_date = dt.today()
-            
+
         # Format date for title and filename
         formatted_date = parsed_date.strftime("%Y-%m-%d")
         day_name = parsed_date.strftime("%A")
-        
+
         # Create title in format "Daily Note: 2023-01-01 (Monday)"
         title = f"Daily Note: {formatted_date} ({day_name})"
-        
+
         # Check if a daily note for this date already exists
         existing_note = self.find_daily_note(parsed_date, category, output_dir)
         if existing_note:
             return False, f"A daily note for {formatted_date} already exists.", existing_note
-            
+
         # Add additional metadata for the daily note
         additional_metadata["date"] = formatted_date
         additional_metadata["day_of_week"] = day_name
-        
+
         try:
             # Create the note using the existing create_note method
             note = self.create_note(
@@ -1050,182 +1107,185 @@ class NoteManager:
             return True, f"Daily note created for {formatted_date} ({day_name}).", note
         except Exception as e:
             return False, f"Error creating daily note: {str(e)}", None
-            
-    def find_daily_note(self, for_date: dt, 
+
+    def find_daily_note(self, for_date: dt,
                         category: Optional[str] = "daily",
                         output_dir: Optional[str] = None) -> Any:
         """
         Find a daily note for the specified date, if it exists.
-        
+
         Args:
             for_date: The date to find a daily note for.
             category: Category to look in. Defaults to "daily".
             output_dir: Optional specific directory to look for the note.
-            
+
         Returns:
             The Note object if found, None otherwise.
         """
         formatted_date = for_date.strftime("%Y-%m-%d")
         day_name = for_date.strftime("%A")
         title = f"Daily Note: {formatted_date} ({day_name})"
-        
+
         # Get filtered notes
-        notes = self.list_notes(tag="daily", category=category, output_dir=output_dir)
-        
+        notes = self.list_notes(
+            tag="daily", category=category, output_dir=output_dir)
+
         # Look for a note matching the title
         for note in notes:
             if note.title == title:
                 return note
-                
+
         # Also check with format variants (simpler matching)
         alt_title_patterns = [
             f"Daily Note: {formatted_date}",
             f"{formatted_date} - Daily Note",
             f"Daily - {formatted_date}"
         ]
-        
+
         for note in notes:
             for pattern in alt_title_patterns:
                 if pattern in note.title:
                     return note
-                    
+
         # Check metadata 'date' field directly as a last resort
         for note in notes:
             if note.metadata.get('date') == formatted_date:
                 return note
-                
+
         return None
-        
-    def get_todays_daily_note(self, 
-                            category: Optional[str] = "daily", 
-                            output_dir: Optional[str] = None) -> Tuple[bool, str, Any]:
+
+    def get_todays_daily_note(self,
+                              category: Optional[str] = "daily",
+                              output_dir: Optional[str] = None) -> Tuple[bool, str, Any]:
         """
         Get today's daily note if it exists, or create it if it doesn't.
-        
+
         Args:
             category: Category for the daily note. Defaults to "daily".
             output_dir: Optional specific directory.
-            
+
         Returns:
             A tuple containing (exists, message, note) where exists is True if the note
             already existed, message is a descriptive string, and note is the Note object.
         """
         # Use dt.today() instead of date.today() to avoid name collision
         today = dt.today()
-        
+
         # Check if today's daily note already exists
         existing_note = self.find_daily_note(today, category, output_dir)
-        
+
         if existing_note:
             return True, "Today's daily note already exists.", existing_note
-            
+
         # If not, create a new daily note
         success, message, note = self.create_daily_note(
             date_str=None,  # Today by default
             category=category,
             output_dir=output_dir
         )
-        
+
         return False, message, note
 
     def get_note_version_history(self, title: str, category: Optional[str] = None,
-                                output_dir: Optional[str] = None) -> Tuple[bool, str, List[Dict[str, Any]]]:
+                                 output_dir: Optional[str] = None) -> Tuple[bool, str, List[Dict[str, Any]]]:
         """
         Get the version history for a note.
-        
+
         Args:
             title: The title of the note.
             category: Optional category to help find the note.
             output_dir: Optional specific directory to look for the note.
-            
+
         Returns:
             A tuple of (success, message, versions)
         """
         if not self.version_control_enabled:
             return False, "Version control is not enabled.", []
-            
+
         # Find the note
         note_path = self.find_note_path(title, category, output_dir)
         if not note_path:
             return False, f"Note '{title}' not found.", []
-            
+
         # Generate note ID
         note_id = self.version_manager.generate_note_id(note_path, title)
-        
+
         # Get version history
         versions = self.version_manager.get_version_history(note_id)
-        
+
         if not versions:
             return True, "No version history found for this note.", []
-            
+
         return True, f"Found {len(versions)} versions.", versions
-    
+
     def get_note_version(self, title: str, version_id: str,
-                        category: Optional[str] = None,
-                        output_dir: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
+                         category: Optional[str] = None,
+                         output_dir: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
         """
         Get a specific version of a note.
-        
+
         Args:
             title: The title of the note.
             version_id: The ID of the version to retrieve.
             category: Optional category to help find the note.
             output_dir: Optional specific directory to look for the note.
-            
+
         Returns:
             A tuple of (success, message, content)
         """
         if not self.version_control_enabled:
             return False, "Version control is not enabled.", None
-            
+
         # Find the note
         note_path = self.find_note_path(title, category, output_dir)
         if not note_path:
             return False, f"Note '{title}' not found.", None
-            
+
         # Generate note ID
         note_id = self.version_manager.generate_note_id(note_path, title)
-        
+
         try:
             # Get version content
-            content, version_info = self.version_manager.get_version_content(note_id, version_id)
+            content, version_info = self.version_manager.get_version_content(
+                note_id, version_id)
             return True, f"Retrieved version {version_id} from {version_info['timestamp']}.", content
         except FileNotFoundError:
             return False, f"Version {version_id} not found.", None
         except Exception as e:
             return False, f"Error retrieving version: {str(e)}", None
-    
+
     def compare_note_versions(self, title: str, old_version_id: str,
-                             new_version_id: Optional[str] = None,
-                             category: Optional[str] = None,
-                             output_dir: Optional[str] = None) -> Tuple[bool, str, Optional[List[str]]]:
+                              new_version_id: Optional[str] = None,
+                              category: Optional[str] = None,
+                              output_dir: Optional[str] = None) -> Tuple[bool, str, Optional[List[str]]]:
         """
         Compare two versions of a note.
-        
+
         Args:
             title: The title of the note.
             old_version_id: The ID of the older version to compare.
             new_version_id: The ID of the newer version to compare. If None, uses latest version.
             category: Optional category to help find the note.
             output_dir: Optional specific directory to look for the note.
-            
+
         Returns:
             A tuple of (success, message, diff_lines)
         """
         if not self.version_control_enabled:
             return False, "Version control is not enabled.", None
-            
+
         # Find the note
         note_path = self.find_note_path(title, category, output_dir)
         if not note_path:
             return False, f"Note '{title}' not found.", None
-            
+
         # Generate note ID
         note_id = self.version_manager.generate_note_id(note_path, title)
-        
+
         try:
             # Compare versions
-            diff_lines = self.version_manager.compare_versions(note_id, old_version_id, new_version_id)
+            diff_lines = self.version_manager.compare_versions(
+                note_id, old_version_id, new_version_id)
             version_desc = f"{old_version_id} to {new_version_id or 'latest'}"
             return True, f"Compared versions {version_desc}.", diff_lines
         except FileNotFoundError as e:
@@ -1234,70 +1294,73 @@ class NoteManager:
             return False, str(e), None
         except Exception as e:
             return False, f"Error comparing versions: {str(e)}", None
-    
+
     def restore_note_version(self, title: str, version_id: str,
-                            category: Optional[str] = None,
-                            output_dir: Optional[str] = None) -> Tuple[bool, str, Optional[Note]]:
+                             category: Optional[str] = None,
+                             output_dir: Optional[str] = None) -> Tuple[bool, str, Optional[Note]]:
         """
         Restore a note to a specific version.
-        
+
         Args:
             title: The title of the note.
             version_id: The ID of the version to restore.
             category: Optional category to help find the note.
             output_dir: Optional specific directory to look for the note.
-            
+
         Returns:
             A tuple of (success, message, restored_note)
         """
         if not self.version_control_enabled:
             return False, "Version control is not enabled.", None
-            
+
         # Find the note
         note_path = self.find_note_path(title, category, output_dir)
         if not note_path:
             return False, f"Note '{title}' not found.", None
-            
+
         # Generate note ID
         note_id = self.version_manager.generate_note_id(note_path, title)
-        
+
         try:
             # Get the version content first to ensure it exists
-            content, version_info = self.version_manager.get_version_content(note_id, version_id)
-            
+            content, version_info = self.version_manager.get_version_content(
+                note_id, version_id)
+
             # Restore the version
-            success = self.version_manager.restore_version(note_id, version_id, note_path)
+            success = self.version_manager.restore_version(
+                note_id, version_id, note_path)
             if not success:
                 return False, f"Failed to restore version {version_id}.", None
-                
+
             # Read the updated note to return it
             metadata, content = read_note_file(note_path)
-            
+
             # Create a Note object for the restored version
             restored_note = Note(
                 title=metadata.get('title', title),
                 content=content,
-                created_at=datetime.fromisoformat(metadata.get('created_at', datetime.now().isoformat())),
+                created_at=datetime.fromisoformat(metadata.get(
+                    'created_at', datetime.now().isoformat())),
                 updated_at=datetime.now(),  # Set updated_at to now since we're restoring
                 tags=metadata.get('tags', []),
                 category=metadata.get('category', None),
                 filename=os.path.basename(note_path),
                 metadata=metadata
             )
-            
+
             # Save the restored version as a new version in history
             if self.version_control_enabled:
                 full_content = self._get_full_note_content(metadata, content)
                 self.version_manager.save_version(
-                    note_id, 
+                    note_id,
                     full_content,
                     title,
                     "System",
                     f"Restored from version {version_id}"
                 )
-                
+
             return True, f"Note restored to version {version_id}.", restored_note
-            
+
         except FileNotFoundError:
             return False, f"Version {version_id} not found.", None
         except Exception as e:
