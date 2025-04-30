@@ -1461,3 +1461,40 @@ class NoteManager:
 
         except Exception as e:
             return False, f"Error editing version: {str(e)}", None
+
+    def purge_note_history(self, title: str, category: Optional[str] = None,
+                          output_dir: Optional[str] = None) -> Tuple[bool, str]:
+        """
+        Delete all version history for a note.
+        
+        Args:
+            title: The title of the note.
+            category: Optional category to help find the note.
+            output_dir: Optional specific directory to look for the note.
+            
+        Returns:
+            A tuple of (success, message)
+        """
+        if not self.version_control_enabled:
+            return False, "Version control is not enabled."
+            
+        # Find the note
+        note_path = self.find_note_path(title, category, output_dir)
+        if not note_path:
+            return False, f"Note '{title}' not found."
+            
+        # Generate note ID
+        note_id = self.version_manager.generate_note_id(note_path, title)
+        
+        # Get version history to check if there are any versions
+        versions = self.version_manager.get_version_history(note_id)
+        if not versions:
+            return True, "No version history found for this note. Nothing to purge."
+        
+        # Purge the history
+        success = self.version_manager.purge_history(note_id)
+        
+        if success:
+            return True, f"Successfully purged version history for '{title}'. {len(versions)} versions deleted."
+        else:
+            return False, f"Failed to purge version history for '{title}'."
