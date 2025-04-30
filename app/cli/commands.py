@@ -1488,6 +1488,7 @@ def list_versions(title: str, category: Optional[str], output_dir: Optional[str]
         return 1
 
 
+
 @versions.command(name="show")
 @click.argument("title")
 @click.argument("version_id")
@@ -1521,8 +1522,7 @@ def show_version(title: str, version_id: str, category: Optional[str], output_di
         )
 
         if not success:
-            console.print(
-                f"[bold red]Error showing version:[/bold red] {message}")
+            console.print(f"[bold red]Error showing version:[/bold red] {message}")
             return 1
 
         # Show version info if available
@@ -1549,33 +1549,30 @@ def show_version(title: str, version_id: str, category: Optional[str], output_di
             try:
                 md = Markdown()
                 html = md.convert(content)
-
+                
                 # Parse YAML frontmatter if present
                 metadata = {}
                 try:
                     metadata, _ = parse_frontmatter(content)
                 except Exception:
                     pass
-
+                    
                 # Display metadata separately
                 if metadata:
                     metadata_panel = Panel(
-                        "\n".join(f"[bold]{k}:[/bold] {v}" for k,
-                                  v in metadata.items()),
+                        "\n".join(f"[bold]{k}:[/bold] {v}" for k, v in metadata.items()),
                         title="Metadata",
                         border_style="green"
                     )
                     console.print(metadata_panel)
 
                 # Display the content with syntax highlighting
-                console.print(
-                    Syntax(content, "markdown", theme="monokai", line_numbers=True, word_wrap=True))
-
+                console.print(Syntax(content, "markdown", theme="monokai", line_numbers=True, word_wrap=True))
+                
             except Exception as e:
-                console.print(
-                    f"[yellow]Error rendering markdown, showing raw content: {str(e)}[/yellow]")
+                console.print(f"[yellow]Error rendering markdown, showing raw content: {str(e)}[/yellow]")
                 console.print(content)
-
+        
         return 0
 
     except Exception as e:
@@ -1583,7 +1580,6 @@ def show_version(title: str, version_id: str, category: Optional[str], output_di
         import traceback
         traceback.print_exc()
         return 1
-
 
 @versions.command(name="diff")
 @click.argument("title")
