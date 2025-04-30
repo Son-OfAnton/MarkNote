@@ -165,8 +165,19 @@ class VersionControlManager:
         Raises:
             FileNotFoundError: If the version doesn't exist
         """
+        # Get the version history
         history = self.get_version_history(note_id)
+        
+        # First try exact match
         version = next((v for v in history if v["version_id"] == version_id), None)
+        
+        # If no exact match is found, check if version_id might be a partial ID
+        if not version and len(history) > 0:
+            # Try partial match for user convenience (e.g., "v1" instead of "v1_2023-...")
+            matching_versions = [v for v in history if version_id in v["version_id"]]
+            if matching_versions:
+                # Use the first matching version
+                version = matching_versions[0]
         
         if not version or not os.path.exists(version["path"]):
             raise FileNotFoundError(f"Version {version_id} not found")
@@ -175,7 +186,8 @@ class VersionControlManager:
             content = f.read()
         
         return content, version
-    
+
+
     def get_latest_version(self, note_id: str) -> Optional[Dict[str, Any]]:
         """
         Get the latest version info for a note.
