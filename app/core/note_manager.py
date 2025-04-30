@@ -1220,7 +1220,7 @@ class NoteManager:
 
     def get_note_version(self, title: str, version_id: str,
                          category: Optional[str] = None,
-                         output_dir: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
+                         output_dir: Optional[str] = None) -> Tuple[bool, str, Optional[str], Optional[Dict[str, Any]]]:
         """
         Get a specific version of a note.
 
@@ -1231,15 +1231,15 @@ class NoteManager:
             output_dir: Optional specific directory to look for the note.
 
         Returns:
-            A tuple of (success, message, content)
+            A tuple of (success, message, content, version_info)
         """
         if not self.version_control_enabled:
-            return False, "Version control is not enabled.", None
+            return False, "Version control is not enabled.", None, None
 
         # Find the note
         note_path = self.find_note_path(title, category, output_dir)
         if not note_path:
-            return False, f"Note '{title}' not found.", None
+            return False, f"Note '{title}' not found.", None, None
 
         # Generate note ID
         note_id = self.version_manager.generate_note_id(note_path, title)
@@ -1248,11 +1248,11 @@ class NoteManager:
             # Get version content
             content, version_info = self.version_manager.get_version_content(
                 note_id, version_id)
-            return True, f"Retrieved version {version_id} from {version_info['timestamp']}.", content
+            return True, f"Retrieved version {version_id} from {version_info['timestamp']}.", content, version_info
         except FileNotFoundError:
-            return False, f"Version {version_id} not found.", None
+            return False, f"Version {version_id} not found.", None, None
         except Exception as e:
-            return False, f"Error retrieving version: {str(e)}", None
+            return False, f"Error retrieving version: {str(e)}", None, None
 
     def compare_note_versions(self, title: str, old_version_id: str,
                               new_version_id: Optional[str] = None,
@@ -1365,3 +1365,99 @@ class NoteManager:
             return False, f"Version {version_id} not found.", None
         except Exception as e:
             return False, f"Error restoring version: {str(e)}", None
+
+    def edit_version(self, title: str, version_id: str,
+                     category: Optional[str] = None,
+                     output_dir: Optional[str] = None,
+                     editor: Optional[str] = None,
+                     commit_message: Optional[str] = None,
+                     author: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
+        """
+        Edit a specific version of a note.
+
+        This method:
+        1. Gets the content of a specific version
+        2. Opens it in an editor
+        3. Saves the edits as a new version
+
+        Args:
+            title: The title of the note
+            version_id: The ID of the version to edit
+            category: Optional category to help find the note
+            output_dir: Optional specific directory to look for the note
+            editor: Optional editor to use for editing
+            commit_message: Optional message for the new version
+            author: Optional author of the edit
+
+        Returns:
+            Tuple of (success, message, new_version_id)
+        """
+        if not self.version_control_enabled:
+            return False, "Version control is not enabled.", None
+
+        # Find the note path
+        note_path = self.find_note_path(title, category, output_dir)
+        if not note_path:
+            return False, f"Note '{title}' not found.", None
+
+        # Generate note ID
+        note_id = self.version_manager.generate_note_id(note_path, title)
+
+        try:
+            # Get the version content
+            success, message, content = self.get_note_version(
+                title=title,
+                version_id=version_id,
+                category=category,
+                output_dir=output_dir
+            )
+
+            if not success:
+                return False, message, None
+
+            # Create a temporary file for editing
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".md", mode="w+", delete=False) as temp_file:
+                temp_path = temp_file.name
+                temp_file.write(content)
+
+            # Open the temp file in an editor
+            from app.utils.editor_handler import edit_file
+            edit_successful = edit_file(temp_path, custom_editor=editor)
+
+            if not edit_successful:
+                # Clean up temp file
+                import os
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                return False, "Failed to edit version content.", None
+
+            # Read the edited content
+            with open(temp_path, "r", encoding="utf-8") as f:
+                edited_content = f.read()
+
+            # Clean up temp file
+            import os
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+            # If content hasn't changed, no need to create a new version
+            if edited_content == content:
+                return True, "No changes were made to the version.", None
+
+            # Save the edited content as a new version
+            if not commit_message:
+                commit_message = f"Edited version {version_id}"
+
+            new_version_id = self.version_manager.save_version(
+                note_id,
+                edited_content,
+                title,
+                author or "Unknown",
+                commit_message
+            )
+
+            return True, f"Version edited successfully. New version: {new_version_id}", new_version_id
+
+        except Exception as e:
+            return False, f"Error editing version: {str(e)}", None

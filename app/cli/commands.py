@@ -1442,7 +1442,7 @@ def list_versions(title: str, category: Optional[str], output_dir: Optional[str]
                 "[bold red]Error:[/bold red] Version control functionality is not available.")
             return 1
 
-        success, history, message = note_manager.get_note_version_history(
+        success, message, history = note_manager.get_note_version_history(
             title=title,
             category=category,
             output_dir=output_dir
@@ -1513,58 +1513,75 @@ def show_version(title: str, version_id: str, category: Optional[str], output_di
                 "[bold red]Error:[/bold red] Version control functionality is not available.")
             return 1
 
-        success, version, message = note_manager.get_note_version(
+        success, message, content, version_info = note_manager.get_note_version(
             title=title,
             version_id=version_id,
             category=category,
             output_dir=output_dir
         )
 
-        if not success or not version:
-            console.print(f"[bold red]Error:[/bold red] {message}")
+        if not success:
+            console.print(
+                f"[bold red]Error showing version:[/bold red] {message}")
             return 1
 
-        # Show version info
-        try:
-            dt = datetime.fromisoformat(version.get("timestamp", ""))
-            formatted_date = dt.strftime("%Y-%m-%d %H:%M:%S")
-        except (ValueError, TypeError):
-            formatted_date = version.get("timestamp", "Unknown")
+        # Show version info if available
+        if version_info:
+            try:
+                dt = datetime.fromisoformat(version_info.get("timestamp", ""))
+                formatted_date = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError):
+                formatted_date = version_info.get("timestamp", "Unknown")
 
-        console.print(Panel(
-            f"[bold]Version ID:[/bold] {version.get('version_id')}\n"
-            f"[bold]Date:[/bold] {formatted_date}\n"
-            f"[bold]Message:[/bold] {version.get('message', 'No message')}",
-            title=f"Version Info for '{title}'",
-            border_style="green"
-        ))
+            console.print(Panel(
+                f"[bold]Version ID:[/bold] {version_info.get('version_id')}\n"
+                f"[bold]Date:[/bold] {formatted_date}\n"
+                f"[bold]Message:[/bold] {version_info.get('message', 'No message')}",
+                title=f"Version of '{title}'",
+                border_style="cyan"
+            ))
 
         # Show the content
-        content = version.get("content", "")
-
         if raw:
-            # Show content as syntax-highlighted plain text
-            try:
-                syntax = Syntax(content, "markdown",
-                                theme="monokai", line_numbers=True)
-                console.print(syntax)
-            except Exception:
-                # Fallback if there's an issue with Syntax
-                console.print(content)
+            console.print(content)
         else:
-            # Render the markdown content
+            # Render markdown
             try:
-                md = Markdown(content)
-                console.print(Panel(md, title="Content", border_style="blue"))
-            except Exception:
-                # Fallback if there's an issue with Markdown rendering
+                md = Markdown()
+                html = md.convert(content)
+
+                # Parse YAML frontmatter if present
+                metadata = {}
+                try:
+                    metadata, _ = parse_frontmatter(content)
+                except Exception:
+                    pass
+
+                # Display metadata separately
+                if metadata:
+                    metadata_panel = Panel(
+                        "\n".join(f"[bold]{k}:[/bold] {v}" for k,
+                                  v in metadata.items()),
+                        title="Metadata",
+                        border_style="green"
+                    )
+                    console.print(metadata_panel)
+
+                # Display the content with syntax highlighting
                 console.print(
-                    Panel(content, title="Content", border_style="blue"))
+                    Syntax(content, "markdown", theme="monokai", line_numbers=True, word_wrap=True))
+
+            except Exception as e:
+                console.print(
+                    f"[yellow]Error rendering markdown, showing raw content: {str(e)}[/yellow]")
+                console.print(content)
 
         return 0
 
     except Exception as e:
         console.print(f"[bold red]Error showing version:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
         return 1
 
 
@@ -1885,17 +1902,16 @@ def create_version(title: str, category: Optional[str], output_dir: Optional[str
 
         console.print(f"[bold green]Success:[/bold green] {msg}")
 
-        # Get version details
-        history_success, _, versions = note_manager.get_note_version_history(
+        # Get version details with variable name changed from "versions" to "history"
+        history_success, _, history = note_manager.get_note_version_history(
             title=title,
             category=category,
             output_dir=output_dir
         )
-
-        if history_success and versions:
-            # Find the newly created version
+        if history_success and history:
+            # Find the newly created version, filtering on "history" now
             new_version = next(
-                (v for v in versions if v["version_id"] == version_id), None)
+                (v for v in history if v["version_id"] == version_id), None)
             if new_version:
                 # Show version details in a panel
                 panel = Panel(
@@ -1912,6 +1928,100 @@ def create_version(title: str, category: Optional[str], output_dir: Optional[str
 
     except Exception as e:
         console.print(f"[bold red]Error creating version:[/bold red] {str(e)}")
+        return 1
+
+
+@versions.command(name="edit")
+@click.argument("title")
+@click.argument("version_id")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--editor", "-e", help="Editor to use for editing.")
+@click.option("--message", "-m", help="Commit message for the new version.")
+@click.option("--author", "-a", help="Author of the edit.")
+def edit_version(title: str, version_id: str, category: Optional[str], output_dir: Optional[str],
+                 editor: Optional[str], message: Optional[str], author: Optional[str]):
+    """
+    Edit a specific version of a note.
+
+    TITLE is the title of the note.
+    VERSION_ID is the ID of the version to edit.
+
+    This will create a new version based on the edits.
+    """
+    try:
+        # Create NoteManager with error handling
+        note_manager = create_note_manager()
+        if not note_manager:
+            return 1
+
+        # Check if needed method exists
+        if not hasattr(note_manager, 'edit_version'):
+            console.print(
+                "[bold red]Error:[/bold red] Version editing functionality is not available.")
+            console.print(
+                "Make sure you have the latest version of MarkNote with version editing support.")
+            return 1
+
+        # Use version_control_enabled check from note_manager if available
+        if hasattr(note_manager, 'version_control_enabled') and not note_manager.version_control_enabled:
+            console.print(
+                "[bold red]Error:[/bold red] Version control is not enabled.")
+            return 1
+
+        console.print(
+            f"Editing version [cyan]{version_id}[/cyan] of note: [cyan]{title}[/cyan]")
+
+        # Edit the version
+        success, msg, new_version_id = note_manager.edit_version(
+            title=title,
+            version_id=version_id,
+            category=category,
+            output_dir=output_dir,
+            editor=editor,
+            commit_message=message,
+            author=author
+        )
+
+        if not success:
+            console.print(f"[bold red]Error:[/bold red] {msg}")
+            return 1
+
+        if not new_version_id:
+            console.print(f"[yellow]{msg}[/yellow]")
+            return 0
+
+        console.print(f"[bold green]Success:[/bold green] {msg}")
+
+        # Get version details
+        history_success, _, history = note_manager.get_note_version_history(
+            title=title,
+            category=category,
+            output_dir=output_dir
+        )
+
+        if history_success and history:
+            # Find the newly created version
+            new_version = next(
+                (v for v in history if v["version_id"] == new_version_id), None)
+            if new_version:
+                # Show version details in a panel
+                panel = Panel(
+                    f"[bold]Version ID:[/bold] {new_version['version_id']}\n"
+                    f"[bold]Created:[/bold] {new_version['timestamp']}\n"
+                    f"[bold]Author:[/bold] {new_version['author']}\n"
+                    f"[bold]Message:[/bold] {new_version['message']}",
+                    title="New Version Details",
+                    border_style="green"
+                )
+                console.print(panel)
+
+        return 0
+
+    except Exception as e:
+        console.print(f"[bold red]Error editing version:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
         return 1
 
 
