@@ -1,4 +1,8 @@
+import os
 from setuptools import setup, find_packages
+
+with open(os.path.join(os.path.dirname(__file__), "requirements.txt"), "r") as f:
+    install_requires = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
 setup(
     name="marknote",
@@ -9,14 +13,7 @@ setup(
     url="https://github.com/Son-OfAnton/MarkNote.git",
     packages=find_packages(exclude=["tests"]),
     include_package_data=True,
-    install_requires=[
-        "click>=8.1.7",
-        "rich>=13.7.0",
-        "markdown>=3.5.2",
-        "pyyaml>=6.0.1",
-        "python-slugify>=8.0.4",
-        "jinja2>=3.1.3",
-    ],
+    install_requires=install_requires,
     extras_require={
         "dev": [
             "pytest>=7.4.3",
