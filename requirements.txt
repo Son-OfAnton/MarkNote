@@ -3,6 +3,7 @@ Brotli==1.1.0
 cffi==1.17.1
 click==8.1.8
 coverage==7.8.0
+cryptography==44.0.2
 cssselect2==0.8.0
 flake8==7.2.0
 fonttools==4.57.0
@@ -10,7 +11,7 @@ iniconfig==2.1.0
 Jinja2==3.1.6
 Markdown==3.8
 markdown-it-py==3.0.0
--e git+https://github.com/Son-OfAnton/MarkNote.git@88c79394f25c32145ec10e40834fc5c4e54e50a3#egg=marknote
+-e git+https://github.com/Son-OfAnton/MarkNote.git@b6c19012c663633e5b543358bd8714b4215457df#egg=marknote
 MarkupSafe==3.0.2
 mccabe==0.7.0
 mdurl==0.1.2

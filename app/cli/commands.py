@@ -19,9 +19,11 @@ from rich.syntax import Syntax
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn
 from app.config.config_manager import get_config_manager, get_daily_note_config
 from app.core.daily_note_service import get_daily_note_service
+from app.core.note_manager_extension import EncryptionNoteManager
 import app.models.note
 
 from app.core.note_manager import NoteManager
+from app.utils.encryption import prompt_for_password
 from app.utils.template_manager import TemplateManager
 from app.utils.editor_handler import edit_file, edit_content, is_valid_editor, get_available_editors
 from app.utils.file_handler import parse_frontmatter
@@ -1489,7 +1491,6 @@ def list_versions(title: str, category: Optional[str], output_dir: Optional[str]
         return 1
 
 
-
 @versions.command(name="show")
 @click.argument("title")
 @click.argument("version_id")
@@ -1523,7 +1524,8 @@ def show_version(title: str, version_id: str, category: Optional[str], output_di
         )
 
         if not success:
-            console.print(f"[bold red]Error showing version:[/bold red] {message}")
+            console.print(
+                f"[bold red]Error showing version:[/bold red] {message}")
             return 1
 
         # Show version info if available
@@ -1550,30 +1552,33 @@ def show_version(title: str, version_id: str, category: Optional[str], output_di
             try:
                 md = Markdown()
                 html = md.convert(content)
-                
+
                 # Parse YAML frontmatter if present
                 metadata = {}
                 try:
                     metadata, _ = parse_frontmatter(content)
                 except Exception:
                     pass
-                    
+
                 # Display metadata separately
                 if metadata:
                     metadata_panel = Panel(
-                        "\n".join(f"[bold]{k}:[/bold] {v}" for k, v in metadata.items()),
+                        "\n".join(f"[bold]{k}:[/bold] {v}" for k,
+                                  v in metadata.items()),
                         title="Metadata",
                         border_style="green"
                     )
                     console.print(metadata_panel)
 
                 # Display the content with syntax highlighting
-                console.print(Syntax(content, "markdown", theme="monokai", line_numbers=True, word_wrap=True))
-                
+                console.print(
+                    Syntax(content, "markdown", theme="monokai", line_numbers=True, word_wrap=True))
+
             except Exception as e:
-                console.print(f"[yellow]Error rendering markdown, showing raw content: {str(e)}[/yellow]")
+                console.print(
+                    f"[yellow]Error rendering markdown, showing raw content: {str(e)}[/yellow]")
                 console.print(content)
-        
+
         return 0
 
     except Exception as e:
@@ -1581,6 +1586,7 @@ def show_version(title: str, version_id: str, category: Optional[str], output_di
         import traceback
         traceback.print_exc()
         return 1
+
 
 @versions.command(name="diff")
 @click.argument("title")
@@ -2020,12 +2026,14 @@ def edit_version(title: str, version_id: str, category: Optional[str], output_di
         import traceback
         traceback.print_exc()
         return 1
-    
+
+
 @click.group()
 def export():
     """Export notes to different formats."""
     pass
 
+
 @export.command(name="pdf")
 @click.argument("title", required=False)
 @click.option("--output-path", "-o", help="Path to the output PDF file.")
@@ -2033,14 +2041,14 @@ def export():
 @click.option("--source-dir", "-s", help="Custom directory to look for notes.")
 @click.option("--custom-css", help="Path to a custom CSS file for styling the PDF.")
 @click.option("--no-metadata", is_flag=True, help="Don't include metadata in the PDF.")
-def export_to_pdf(title: Optional[str], output_path: Optional[str], 
-                 category: Optional[str], source_dir: Optional[str],
-                 custom_css: Optional[str], no_metadata: bool):
+def export_to_pdf(title: Optional[str], output_path: Optional[str],
+                  category: Optional[str], source_dir: Optional[str],
+                  custom_css: Optional[str], no_metadata: bool):
     """Export a note to PDF format."""
     try:
         # Create note manager
         note_manager = NoteManager()
-        
+
         # Load custom CSS if provided
         css_content = None
         if custom_css:
@@ -2048,14 +2056,15 @@ def export_to_pdf(title: Optional[str], output_path: Optional[str],
                 with open(custom_css, 'r', encoding='utf-8') as f:
                     css_content = f.read()
             except Exception as e:
-                console.print(f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
+                console.print(
+                    f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
                 return 1
-        
+
         # Determine if we're exporting a single note or all notes
         if title:
             # Export a single note
             console.print(f"Exporting note [cyan]{title}[/cyan] to PDF...")
-            
+
             success, message = note_manager.export_note_to_pdf(
                 title=title,
                 output_path=output_path,
@@ -2064,7 +2073,7 @@ def export_to_pdf(title: Optional[str], output_path: Optional[str],
                 custom_css=css_content,
                 include_metadata=not no_metadata
             )
-            
+
             if success:
                 console.print(f"[bold green]Success:[/bold green] {message}")
                 return 0
@@ -2076,12 +2085,13 @@ def export_to_pdf(title: Optional[str], output_path: Optional[str],
             if not output_path:
                 # Default to "exports" directory in the current directory
                 output_path = os.path.join(os.getcwd(), "exports")
-            
+
             # Ensure output directory exists
             os.makedirs(output_path, exist_ok=True)
-            
-            console.print(f"Exporting all notes to [cyan]{output_path}[/cyan]...")
-            
+
+            console.print(
+                f"Exporting all notes to [cyan]{output_path}[/cyan]...")
+
             # Show a progress spinner
             with Progress(
                 SpinnerColumn(),
@@ -2093,7 +2103,7 @@ def export_to_pdf(title: Optional[str], output_path: Optional[str],
             ) as progress:
                 # Create a progress task
                 task = progress.add_task("Exporting notes...", total=None)
-                
+
                 # Export all notes
                 successful, total, failed = note_manager.export_all_notes_to_pdf(
                     output_dir=output_path,
@@ -2102,45 +2112,47 @@ def export_to_pdf(title: Optional[str], output_path: Optional[str],
                     custom_css=css_content,
                     include_metadata=not no_metadata
                 )
-                
+
                 # Complete the progress
                 progress.update(task, completed=True, total=1)
-            
+
             # Display results in a table
             if total == 0:
                 console.print("[yellow]No notes found to export.[/yellow]")
                 return 0
-            
+
             results_table = Table(title="Export Results")
             results_table.add_column("Status", style="bold")
             results_table.add_column("Count", style="cyan")
-            
+
             results_table.add_row("Total Notes", str(total))
             results_table.add_row("Successfully Exported", str(successful))
             results_table.add_row("Failed", str(len(failed)))
-            
+
             console.print(results_table)
-            
+
             # Show the export location
             console.print(Panel(
                 f"PDF files exported to: [cyan]{output_path}[/cyan]",
                 title="Export Complete",
                 border_style="green"
             ))
-            
+
             # If there were failures, show them
             if failed:
-                console.print("[bold red]Failed to export the following notes:[/bold red]")
+                console.print(
+                    "[bold red]Failed to export the following notes:[/bold red]")
                 for note in failed:
                     console.print(f"  - {note}")
-            
+
             return 0 if len(failed) == 0 else 1
-            
+
     except Exception as e:
         console.print(f"[bold red]Error exporting to PDF:[/bold red] {str(e)}")
         import traceback
         traceback.print_exc()
         return 1
+
 
 @export.command(name="batch-pdf")
 @click.argument("titles", nargs=-1, required=True)
@@ -2150,16 +2162,16 @@ def export_to_pdf(title: Optional[str], output_path: Optional[str],
 @click.option("--custom-css", help="Path to a custom CSS file for styling the PDFs.")
 @click.option("--no-metadata", is_flag=True, help="Don't include metadata in the PDFs.")
 def batch_export_to_pdf(titles: List[str], output_dir: str,
-                       category: Optional[str], source_dir: Optional[str],
-                       custom_css: Optional[str], no_metadata: bool):
+                        category: Optional[str], source_dir: Optional[str],
+                        custom_css: Optional[str], no_metadata: bool):
     """Export multiple notes to PDF format.
-    
+
     TITLES is a space-separated list of note titles to export.
     """
     try:
         # Create note manager
         note_manager = NoteManager()
-        
+
         # Load custom CSS if provided
         css_content = None
         if custom_css:
@@ -2167,15 +2179,17 @@ def batch_export_to_pdf(titles: List[str], output_dir: str,
                 with open(custom_css, 'r', encoding='utf-8') as f:
                     css_content = f.read()
             except Exception as e:
-                console.print(f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
+                console.print(
+                    f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
                 return 1
-        
+
         # Ensure output directory exists
         output_dir = os.path.expanduser(output_dir)
         os.makedirs(output_dir, exist_ok=True)
-        
-        console.print(f"Exporting {len(titles)} notes to [cyan]{output_dir}[/cyan]...")
-        
+
+        console.print(
+            f"Exporting {len(titles)} notes to [cyan]{output_dir}[/cyan]...")
+
         # Show a progress spinner for each note
         with Progress(
             SpinnerColumn(),
@@ -2185,15 +2199,16 @@ def batch_export_to_pdf(titles: List[str], output_dir: str,
             console=console
         ) as progress:
             task = progress.add_task("Exporting notes...", total=len(titles))
-            
+
             # Export each note
             results = {}
             for title in titles:
-                progress.update(task, description=f"Exporting [cyan]{title}[/cyan]...")
-                
+                progress.update(
+                    task, description=f"Exporting [cyan]{title}[/cyan]...")
+
                 pdf_filename = f"{title.lower().replace(' ', '-')}.pdf"
                 output_path = os.path.join(output_dir, pdf_filename)
-                
+
                 success, message = note_manager.export_note_to_pdf(
                     title=title,
                     output_path=output_path,
@@ -2202,19 +2217,19 @@ def batch_export_to_pdf(titles: List[str], output_dir: str,
                     custom_css=css_content,
                     include_metadata=not no_metadata
                 )
-                
+
                 results[title] = (success, message)
                 progress.advance(task)
-        
+
         # Display results in a table
         results_table = Table(title="Export Results")
         results_table.add_column("Note", style="cyan")
         results_table.add_column("Status", style="bold")
         results_table.add_column("Message")
-        
+
         successful_count = 0
         failed_count = 0
-        
+
         for title, (success, message) in results.items():
             status_str = "[green]Success[/green]" if success else "[red]Failed[/red]"
             results_table.add_row(title, status_str, message)
@@ -2222,23 +2237,24 @@ def batch_export_to_pdf(titles: List[str], output_dir: str,
                 successful_count += 1
             else:
                 failed_count += 1
-        
+
         console.print(results_table)
-        
+
         # Show summary
         console.print(Panel(
             f"Successfully exported {successful_count} of {len(titles)} notes to [cyan]{output_dir}[/cyan]",
             title="Export Complete",
             border_style="green" if failed_count == 0 else "yellow"
         ))
-        
+
         return 0 if failed_count == 0 else 1
-        
+
     except Exception as e:
         console.print(f"[bold red]Error exporting to PDF:[/bold red] {str(e)}")
         import traceback
         traceback.print_exc()
         return 1
+
 
 @export.command(name="pdf")
 @click.argument("title", required=False)
@@ -2247,14 +2263,14 @@ def batch_export_to_pdf(titles: List[str], output_dir: str,
 @click.option("--source-dir", "-s", help="Custom directory to look for notes.")
 @click.option("--custom-css", help="Path to a custom CSS file for styling the PDF.")
 @click.option("--no-metadata", is_flag=True, help="Don't include metadata in the PDF.")
-def export_to_pdf(title: Optional[str], output_path: Optional[str], 
-                 category: Optional[str], source_dir: Optional[str],
-                 custom_css: Optional[str], no_metadata: bool):
+def export_to_pdf(title: Optional[str], output_path: Optional[str],
+                  category: Optional[str], source_dir: Optional[str],
+                  custom_css: Optional[str], no_metadata: bool):
     """Export a note to PDF format."""
     try:
         # Create note manager
         note_manager = NoteManager()
-        
+
         # Load custom CSS if provided
         css_content = None
         if custom_css:
@@ -2262,14 +2278,15 @@ def export_to_pdf(title: Optional[str], output_path: Optional[str],
                 with open(custom_css, 'r', encoding='utf-8') as f:
                     css_content = f.read()
             except Exception as e:
-                console.print(f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
+                console.print(
+                    f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
                 return 1
-        
+
         # Determine if we're exporting a single note or all notes
         if title:
             # Export a single note
             console.print(f"Exporting note [cyan]{title}[/cyan] to PDF...")
-            
+
             success, message = note_manager.export_note_to_pdf(
                 title=title,
                 output_path=output_path,
@@ -2278,7 +2295,7 @@ def export_to_pdf(title: Optional[str], output_path: Optional[str],
                 custom_css=css_content,
                 include_metadata=not no_metadata
             )
-            
+
             if success:
                 console.print(f"[bold green]Success:[/bold green] {message}")
                 return 0
@@ -2290,12 +2307,13 @@ def export_to_pdf(title: Optional[str], output_path: Optional[str],
             if not output_path:
                 # Default to "exports" directory in the current directory
                 output_path = os.path.join(os.getcwd(), "exports")
-            
+
             # Ensure output directory exists
             os.makedirs(output_path, exist_ok=True)
-            
-            console.print(f"Exporting all notes to [cyan]{output_path}[/cyan]...")
-            
+
+            console.print(
+                f"Exporting all notes to [cyan]{output_path}[/cyan]...")
+
             # Show a progress spinner
             with Progress(
                 SpinnerColumn(),
@@ -2307,7 +2325,7 @@ def export_to_pdf(title: Optional[str], output_path: Optional[str],
             ) as progress:
                 # Create a progress task
                 task = progress.add_task("Exporting notes...", total=None)
-                
+
                 # Export all notes
                 successful, total, failed = note_manager.export_all_notes_to_pdf(
                     output_dir=output_path,
@@ -2316,45 +2334,47 @@ def export_to_pdf(title: Optional[str], output_path: Optional[str],
                     custom_css=css_content,
                     include_metadata=not no_metadata
                 )
-                
+
                 # Complete the progress
                 progress.update(task, completed=True, total=1)
-            
+
             # Display results in a table
             if total == 0:
                 console.print("[yellow]No notes found to export.[/yellow]")
                 return 0
-            
+
             results_table = Table(title="Export Results")
             results_table.add_column("Status", style="bold")
             results_table.add_column("Count", style="cyan")
-            
+
             results_table.add_row("Total Notes", str(total))
             results_table.add_row("Successfully Exported", str(successful))
             results_table.add_row("Failed", str(len(failed)))
-            
+
             console.print(results_table)
-            
+
             # Show the export location
             console.print(Panel(
                 f"PDF files exported to: [cyan]{output_path}[/cyan]",
                 title="Export Complete",
                 border_style="green"
             ))
-            
+
             # If there were failures, show them
             if failed:
-                console.print("[bold red]Failed to export the following notes:[/bold red]")
+                console.print(
+                    "[bold red]Failed to export the following notes:[/bold red]")
                 for note in failed:
                     console.print(f"  - {note}")
-            
+
             return 0 if len(failed) == 0 else 1
-            
+
     except Exception as e:
         console.print(f"[bold red]Error exporting to PDF:[/bold red] {str(e)}")
         import traceback
         traceback.print_exc()
         return 1
+
 
 @export.command(name="batch-pdf")
 @click.argument("titles", nargs=-1, required=True)
@@ -2364,16 +2384,16 @@ def export_to_pdf(title: Optional[str], output_path: Optional[str],
 @click.option("--custom-css", help="Path to a custom CSS file for styling the PDFs.")
 @click.option("--no-metadata", is_flag=True, help="Don't include metadata in the PDFs.")
 def batch_export_to_pdf(titles: List[str], output_dir: str,
-                       category: Optional[str], source_dir: Optional[str],
-                       custom_css: Optional[str], no_metadata: bool):
+                        category: Optional[str], source_dir: Optional[str],
+                        custom_css: Optional[str], no_metadata: bool):
     """Export multiple notes to PDF format.
-    
+
     TITLES is a space-separated list of note titles to export.
     """
     try:
         # Create note manager
         note_manager = NoteManager()
-        
+
         # Load custom CSS if provided
         css_content = None
         if custom_css:
@@ -2381,15 +2401,17 @@ def batch_export_to_pdf(titles: List[str], output_dir: str,
                 with open(custom_css, 'r', encoding='utf-8') as f:
                     css_content = f.read()
             except Exception as e:
-                console.print(f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
+                console.print(
+                    f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
                 return 1
-        
+
         # Ensure output directory exists
         output_dir = os.path.expanduser(output_dir)
         os.makedirs(output_dir, exist_ok=True)
-        
-        console.print(f"Exporting {len(titles)} notes to [cyan]{output_dir}[/cyan]...")
-        
+
+        console.print(
+            f"Exporting {len(titles)} notes to [cyan]{output_dir}[/cyan]...")
+
         # Show a progress spinner for each note
         with Progress(
             SpinnerColumn(),
@@ -2399,15 +2421,16 @@ def batch_export_to_pdf(titles: List[str], output_dir: str,
             console=console
         ) as progress:
             task = progress.add_task("Exporting notes...", total=len(titles))
-            
+
             # Export each note
             results = {}
             for title in titles:
-                progress.update(task, description=f"Exporting [cyan]{title}[/cyan]...")
-                
+                progress.update(
+                    task, description=f"Exporting [cyan]{title}[/cyan]...")
+
                 pdf_filename = f"{title.lower().replace(' ', '-')}.pdf"
                 output_path = os.path.join(output_dir, pdf_filename)
-                
+
                 success, message = note_manager.export_note_to_pdf(
                     title=title,
                     output_path=output_path,
@@ -2416,19 +2439,19 @@ def batch_export_to_pdf(titles: List[str], output_dir: str,
                     custom_css=css_content,
                     include_metadata=not no_metadata
                 )
-                
+
                 results[title] = (success, message)
                 progress.advance(task)
-        
+
         # Display results in a table
         results_table = Table(title="Export Results")
         results_table.add_column("Note", style="cyan")
         results_table.add_column("Status", style="bold")
         results_table.add_column("Message")
-        
+
         successful_count = 0
         failed_count = 0
-        
+
         for title, (success, message) in results.items():
             status_str = "[green]Success[/green]" if success else "[red]Failed[/red]"
             results_table.add_row(title, status_str, message)
@@ -2436,18 +2459,18 @@ def batch_export_to_pdf(titles: List[str], output_dir: str,
                 successful_count += 1
             else:
                 failed_count += 1
-        
+
         console.print(results_table)
-        
+
         # Show summary
         console.print(Panel(
             f"Successfully exported {successful_count} of {len(titles)} notes to [cyan]{output_dir}[/cyan]",
             title="Export Complete",
             border_style="green" if failed_count == 0 else "yellow"
         ))
-        
+
         return 0 if failed_count == 0 else 1
-        
+
     except Exception as e:
         console.print(f"[bold red]Error exporting to PDF:[/bold red] {str(e)}")
         import traceback
@@ -2455,6 +2478,8 @@ def batch_export_to_pdf(titles: List[str], output_dir: str,
         return 1
 
 # HTML export commands
+
+
 @export.command(name="html")
 @click.argument("title", required=False)
 @click.option("--output-path", "-o", help="Path to the output HTML file.")
@@ -2463,14 +2488,14 @@ def batch_export_to_pdf(titles: List[str], output_dir: str,
 @click.option("--custom-css", help="Path to a custom CSS file for styling the HTML.")
 @click.option("--no-metadata", is_flag=True, help="Don't include metadata in the HTML.")
 @click.option("--index/--no-index", default=True, help="Create an index.html file when exporting all notes.")
-def export_to_html(title: Optional[str], output_path: Optional[str], 
-                  category: Optional[str], source_dir: Optional[str],
-                  custom_css: Optional[str], no_metadata: bool, index: bool):
+def export_to_html(title: Optional[str], output_path: Optional[str],
+                   category: Optional[str], source_dir: Optional[str],
+                   custom_css: Optional[str], no_metadata: bool, index: bool):
     """Export a note or all notes to HTML format."""
     try:
         # Create note manager
         note_manager = NoteManager()
-        
+
         # Load custom CSS if provided
         css_content = None
         if custom_css:
@@ -2478,14 +2503,15 @@ def export_to_html(title: Optional[str], output_path: Optional[str],
                 with open(custom_css, 'r', encoding='utf-8') as f:
                     css_content = f.read()
             except Exception as e:
-                console.print(f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
+                console.print(
+                    f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
                 return 1
-        
+
         # Determine if we're exporting a single note or all notes
         if title:
             # Export a single note
             console.print(f"Exporting note [cyan]{title}[/cyan] to HTML...")
-            
+
             success, message = note_manager.export_note_to_html(
                 title=title,
                 output_path=output_path,
@@ -2494,7 +2520,7 @@ def export_to_html(title: Optional[str], output_path: Optional[str],
                 custom_css=css_content,
                 include_metadata=not no_metadata
             )
-            
+
             if success:
                 console.print(f"[bold green]Success:[/bold green] {message}")
                 return 0
@@ -2506,12 +2532,13 @@ def export_to_html(title: Optional[str], output_path: Optional[str],
             if not output_path:
                 # Default to "exports/html" directory in the current directory
                 output_path = os.path.join(os.getcwd(), "exports", "html")
-            
+
             # Ensure output directory exists
             os.makedirs(output_path, exist_ok=True)
-            
-            console.print(f"Exporting all notes to [cyan]{output_path}[/cyan]...")
-            
+
+            console.print(
+                f"Exporting all notes to [cyan]{output_path}[/cyan]...")
+
             # Show a progress spinner
             with Progress(
                 SpinnerColumn(),
@@ -2523,7 +2550,7 @@ def export_to_html(title: Optional[str], output_path: Optional[str],
             ) as progress:
                 # Create a progress task
                 task = progress.add_task("Exporting notes...", total=None)
-                
+
                 # Export all notes
                 successful, total, failed, index_path = note_manager.export_all_notes_to_html(
                     output_dir=output_path,
@@ -2533,46 +2560,49 @@ def export_to_html(title: Optional[str], output_path: Optional[str],
                     custom_css=css_content,
                     include_metadata=not no_metadata
                 )
-                
+
                 # Complete the progress
                 progress.update(task, completed=True, total=1)
-            
+
             # Display results in a table
             if total == 0:
                 console.print("[yellow]No notes found to export.[/yellow]")
                 return 0
-            
+
             results_table = Table(title="Export Results")
             results_table.add_column("Status", style="bold")
             results_table.add_column("Count", style="cyan")
-            
+
             results_table.add_row("Total Notes", str(total))
             results_table.add_row("Successfully Exported", str(successful))
             results_table.add_row("Failed", str(len(failed)))
-            
+
             console.print(results_table)
-            
+
             # Show the export location
             console.print(Panel(
-                f"HTML files exported to: [cyan]{output_path}[/cyan]" + 
+                f"HTML files exported to: [cyan]{output_path}[/cyan]" +
                 (f"\nIndex file created at: [cyan]{index_path}[/cyan]" if index_path else ""),
                 title="Export Complete",
                 border_style="green"
             ))
-            
+
             # If there were failures, show them
             if failed:
-                console.print("[bold red]Failed to export the following notes:[/bold red]")
+                console.print(
+                    "[bold red]Failed to export the following notes:[/bold red]")
                 for note in failed:
                     console.print(f"  - {note}")
-            
+
             return 0 if len(failed) == 0 else 1
-            
+
     except Exception as e:
-        console.print(f"[bold red]Error exporting to HTML:[/bold red] {str(e)}")
+        console.print(
+            f"[bold red]Error exporting to HTML:[/bold red] {str(e)}")
         import traceback
         traceback.print_exc()
         return 1
+
 
 @export.command(name="batch-html")
 @click.argument("titles", nargs=-1, required=True)
@@ -2583,16 +2613,16 @@ def export_to_html(title: Optional[str], output_path: Optional[str],
 @click.option("--no-metadata", is_flag=True, help="Don't include metadata in the HTML files.")
 @click.option("--index/--no-index", default=True, help="Create an index.html file.")
 def batch_export_to_html(titles: List[str], output_dir: str,
-                        category: Optional[str], source_dir: Optional[str],
-                        custom_css: Optional[str], no_metadata: bool, index: bool):
+                         category: Optional[str], source_dir: Optional[str],
+                         custom_css: Optional[str], no_metadata: bool, index: bool):
     """Export multiple notes to HTML format.
-    
+
     TITLES is a space-separated list of note titles to export.
     """
     try:
         # Create note manager
         note_manager = NoteManager()
-        
+
         # Load custom CSS if provided
         css_content = None
         if custom_css:
@@ -2600,15 +2630,17 @@ def batch_export_to_html(titles: List[str], output_dir: str,
                 with open(custom_css, 'r', encoding='utf-8') as f:
                     css_content = f.read()
             except Exception as e:
-                console.print(f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
+                console.print(
+                    f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
                 return 1
-        
+
         # Ensure output directory exists
         output_dir = os.path.expanduser(output_dir)
         os.makedirs(output_dir, exist_ok=True)
-        
-        console.print(f"Exporting {len(titles)} notes to [cyan]{output_dir}[/cyan]...")
-        
+
+        console.print(
+            f"Exporting {len(titles)} notes to [cyan]{output_dir}[/cyan]...")
+
         # Show a progress spinner for each note
         with Progress(
             SpinnerColumn(),
@@ -2618,7 +2650,7 @@ def batch_export_to_html(titles: List[str], output_dir: str,
             console=console
         ) as progress:
             task = progress.add_task("Exporting notes...", total=len(titles))
-            
+
             # Export the notes
             results = note_manager.export_notes_to_html(
                 notes=titles,
@@ -2629,51 +2661,53 @@ def batch_export_to_html(titles: List[str], output_dir: str,
                 custom_css=css_content,
                 include_metadata=not no_metadata
             )
-            
+
             # Complete the progress
             progress.update(task, completed=True, total=1)
-        
+
         # Display results in a table
         results_table = Table(title="Export Results")
         results_table.add_column("Note", style="cyan")
         results_table.add_column("Status", style="bold")
-        
+
         successful_count = 0
         failed_count = 0
-        
+
         for title, message in results.items():
             if title == 'index':
                 continue  # Skip the index entry for this table
-                
+
             if "successfully" in message.lower():
                 status = "[green]Success[/green]"
                 successful_count += 1
             else:
                 status = "[red]Failed[/red]"
                 failed_count += 1
-                
+
             results_table.add_row(title, status)
-        
+
         console.print(results_table)
-        
+
         # Show the index file if it was created
         if 'index' in results:
             console.print(f"[green]Index:[/green] {results['index']}")
-        
+
         # Show summary
         console.print(Panel(
             f"Successfully exported {successful_count} of {len(titles)} notes to [cyan]{output_dir}[/cyan]",
             title="Export Complete",
             border_style="green" if failed_count == 0 else "yellow"
         ))
-        
+
         return 0 if failed_count == 0 else 1
-        
+
     except Exception as e:
-        console.print(f"[bold red]Error exporting to HTML:[/bold red] {str(e)}")
+        console.print(
+            f"[bold red]Error exporting to HTML:[/bold red] {str(e)}")
         import traceback
         traceback.print_exc()
         return 1
+
 
 @export.command(name="site")
 @click.argument("output-dir", required=True)
@@ -2681,20 +2715,20 @@ def batch_export_to_html(titles: List[str], output_dir: str,
 @click.option("--source-dir", "-s", help="Custom directory to look for notes.")
 @click.option("--custom-css", help="Path to a custom CSS file for styling the site.")
 @click.option("--no-metadata", is_flag=True, help="Don't include metadata in the HTML files.")
-def create_static_site(output_dir: str, category: Optional[str], 
-                      source_dir: Optional[str], custom_css: Optional[str],
-                      no_metadata: bool):
+def create_static_site(output_dir: str, category: Optional[str],
+                       source_dir: Optional[str], custom_css: Optional[str],
+                       no_metadata: bool):
     """Create a static website from your notes.
-    
+
     This command exports all notes to HTML and creates an index page,
     effectively creating a simple static website from your notes.
-    
+
     OUTPUT-DIR is the directory where the website files will be saved.
     """
     try:
         # Create note manager
         note_manager = NoteManager()
-        
+
         # Load custom CSS if provided
         css_content = None
         if custom_css:
@@ -2702,22 +2736,23 @@ def create_static_site(output_dir: str, category: Optional[str],
                 with open(custom_css, 'r', encoding='utf-8') as f:
                     css_content = f.read()
             except Exception as e:
-                console.print(f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
+                console.print(
+                    f"[bold red]Error loading custom CSS:[/bold red] {str(e)}")
                 return 1
-        
+
         # Ensure output directory exists
         output_dir = os.path.expanduser(output_dir)
-        
+
         # Check if directory exists and is not empty
         if os.path.exists(output_dir) and os.listdir(output_dir):
             if not Confirm.ask(f"Directory [cyan]{output_dir}[/cyan] is not empty. Existing files may be overwritten. Continue?"):
                 console.print("[yellow]Operation cancelled.[/yellow]")
                 return 0
-        
+
         os.makedirs(output_dir, exist_ok=True)
-        
+
         console.print(f"Creating static site in [cyan]{output_dir}[/cyan]...")
-        
+
         # Show a progress spinner
         with Progress(
             SpinnerColumn(),
@@ -2729,7 +2764,7 @@ def create_static_site(output_dir: str, category: Optional[str],
         ) as progress:
             # Create a progress task
             task = progress.add_task("Generating site...", total=None)
-            
+
             # Create the site
             successful, total, failed, index_path = note_manager.create_static_site(
                 output_dir=output_dir,
@@ -2738,25 +2773,26 @@ def create_static_site(output_dir: str, category: Optional[str],
                 custom_css=css_content,
                 include_metadata=not no_metadata
             )
-            
+
             # Complete the progress
             progress.update(task, completed=True, total=1)
-        
+
         # Display results in a table
         if total == 0:
-            console.print("[yellow]No notes found to include in the site.[/yellow]")
+            console.print(
+                "[yellow]No notes found to include in the site.[/yellow]")
             return 0
-        
+
         results_table = Table(title="Site Generation Results")
         results_table.add_column("Status", style="bold")
         results_table.add_column("Count", style="cyan")
-        
+
         results_table.add_row("Total Notes", str(total))
         results_table.add_row("Successfully Generated", str(successful))
         results_table.add_row("Failed", str(len(failed)))
-        
+
         console.print(results_table)
-        
+
         # Show the site location and how to view it
         site_info = (
             f"Site created at: [cyan]{output_dir}[/cyan]\n"
@@ -2767,26 +2803,462 @@ def create_static_site(output_dir: str, category: Optional[str],
             f"   [dim]$ cd {output_dir} && python -m http.server 8000[/dim]\n"
             "   [dim]Then visit http://localhost:8000 in your browser[/dim]"
         )
-        
+
         console.print(Panel(
             site_info,
             title="Site Generation Complete",
             border_style="green"
         ))
-        
+
         # If there were failures, show them
         if failed:
-            console.print("[bold red]Failed to generate the following pages:[/bold red]")
+            console.print(
+                "[bold red]Failed to generate the following pages:[/bold red]")
             for note in failed:
                 console.print(f"  - {note}")
-        
+
         return 0 if len(failed) == 0 else 1
-        
+
     except Exception as e:
-        console.print(f"[bold red]Error creating static site:[/bold red] {str(e)}")
+        console.print(
+            f"[bold red]Error creating static site:[/bold red] {str(e)}")
         import traceback
         traceback.print_exc()
         return 1
+
+
+@click.group(name="encrypt")
+def encrypt_commands():
+    """Encrypt and manage encrypted notes."""
+    pass
+
+
+@encrypt_commands.command(name="note")
+@click.argument("title")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--password", "-p", help="Password for encryption (will prompt if not provided).")
+@click.option("--force", "-f", is_flag=True, help="Force encryption even if already encrypted.")
+def encrypt_note(title: str, category: Optional[str], output_dir: Optional[str],
+                 password: Optional[str], force: bool):
+    """
+    Encrypt a note with a password.
+
+    TITLE is the title of the note to encrypt.
+    """
+    try:
+        # Create encryption-enabled note manager
+        note_manager = EncryptionNoteManager()
+
+        # Check if the note is already encrypted
+        if not force and note_manager.is_note_encrypted(title, category, output_dir):
+            if not Confirm.ask(f"Note '{title}' is already encrypted. Re-encrypt?"):
+                console.print("[yellow]Operation cancelled.[/yellow]")
+                return 0
+
+        # If password not provided, prompt for it
+        if not password:
+            try:
+                password = prompt_for_password(
+                    "Enter encryption password: ", confirm=True)
+            except ValueError as e:
+                console.print(f"[bold red]Error:[/bold red] {str(e)}")
+                return 1
+
+        # Encrypt the note
+        success, message = note_manager.encrypt_note(
+            title, password, category, output_dir)
+
+        if success:
+            console.print(f"[bold green]Success:[/bold green] {message}")
+            console.print(
+                "[bold yellow]Important:[/bold yellow] Keep your password safe! There is NO WAY to recover the note if you forget it.")
+            return 0
+        else:
+            console.print(f"[bold red]Error:[/bold red] {message}")
+            return 1
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+
+
+@encrypt_commands.command(name="batch")
+@click.argument("titles", nargs=-1, required=True)
+@click.option("--category", "-c", help="Category of the notes.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--password", "-p", help="Password for encryption (will prompt if not provided).")
+@click.option("--force", "-f", is_flag=True, help="Force encryption even if already encrypted.")
+def batch_encrypt(titles: List[str], category: Optional[str], output_dir: Optional[str],
+                  password: Optional[str], force: bool):
+    """
+    Encrypt multiple notes with the same password.
+
+    TITLES is a space-separated list of note titles to encrypt.
+    """
+    try:
+        if not titles:
+            console.print("[bold yellow]No titles provided.[/bold yellow]")
+            return 0
+
+        # Create encryption-enabled note manager
+        note_manager = EncryptionNoteManager()
+
+        # If password not provided, prompt for it
+        if not password:
+            try:
+                password = prompt_for_password(
+                    "Enter encryption password: ", confirm=True)
+            except ValueError as e:
+                console.print(f"[bold red]Error:[/bold red] {str(e)}")
+                return 1
+
+        # Show progress spinner
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            console=console
+        ) as progress:
+            task = progress.add_task("Encrypting notes...", total=len(titles))
+
+            # Process each note
+            results = {}
+            for title in titles:
+                progress.update(
+                    task, description=f"Encrypting [cyan]{title}[/cyan]...")
+
+                # Skip already encrypted notes unless force is specified
+                if not force and note_manager.is_note_encrypted(title, category, output_dir):
+                    results[title] = "Already encrypted (skipped)"
+                    progress.advance(task)
+                    continue
+
+                # Encrypt the note
+                success, message = note_manager.encrypt_note(
+                    title, password, category, output_dir)
+                results[title] = message if success else f"Failed: {message}"
+                progress.advance(task)
+
+        # Display results
+        table = Table(title=f"Encryption Results ({len(titles)} notes)")
+        table.add_column("Note", style="cyan")
+        table.add_column("Status", style="bold")
+
+        success_count = 0
+        for title, result in results.items():
+            status_style = "green" if "success" in result.lower(
+            ) else "red" if "failed" in result.lower() else "yellow"
+            table.add_row(title, f"[{status_style}]{result}[/{status_style}]")
+            if "success" in result.lower():
+                success_count += 1
+
+        console.print(table)
+
+        # Summary message
+        console.print(Panel(
+            f"Successfully encrypted {success_count} of {len(titles)} notes.",
+            title="Encryption Summary",
+            border_style="green" if success_count == len(titles) else "yellow"
+        ))
+
+        if success_count > 0:
+            console.print(
+                "[bold yellow]Important:[/bold yellow] Keep your password safe! There is NO WAY to recover the notes if you forget it.")
+
+        return 0 if success_count == len(titles) else 1
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+
+
+@click.group(name="decrypt")
+def decrypt_commands():
+    """Decrypt encrypted notes."""
+    pass
+
+
+@decrypt_commands.command(name="note")
+@click.argument("title")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--password", "-p", help="Password for decryption (will prompt if not provided).")
+def decrypt_note(title: str, category: Optional[str], output_dir: Optional[str], password: Optional[str]):
+    """
+    Decrypt an encrypted note.
+
+    TITLE is the title of the note to decrypt.
+    """
+    try:
+        # Create encryption-enabled note manager
+        note_manager = EncryptionNoteManager()
+
+        # Check if the note is actually encrypted
+        if not note_manager.is_note_encrypted(title, category, output_dir):
+            console.print(
+                f"[bold yellow]Note '{title}' is not encrypted.[/bold yellow]")
+            return 0
+
+        # If password not provided, prompt for it
+        if not password:
+            password = prompt_for_password("Enter decryption password: ")
+
+        # Decrypt the note
+        success, message = note_manager.decrypt_note(
+            title, password, category, output_dir)
+
+        if success:
+            console.print(f"[bold green]Success:[/bold green] {message}")
+            return 0
+        else:
+            console.print(f"[bold red]Error:[/bold red] {message}")
+            return 1
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+
+
+@decrypt_commands.command(name="batch")
+@click.argument("titles", nargs=-1, required=True)
+@click.option("--category", "-c", help="Category of the notes.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--password", "-p", help="Password for decryption (will prompt if not provided).")
+def batch_decrypt(titles: List[str], category: Optional[str], output_dir: Optional[str], password: Optional[str]):
+    """
+    Decrypt multiple encrypted notes with the same password.
+
+    TITLES is a space-separated list of note titles to decrypt.
+    """
+    try:
+        if not titles:
+            console.print("[bold yellow]No titles provided.[/bold yellow]")
+            return 0
+
+        # Create encryption-enabled note manager
+        note_manager = EncryptionNoteManager()
+
+        # If password not provided, prompt for it
+        if not password:
+            password = prompt_for_password("Enter decryption password: ")
+
+        # Show progress spinner
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            console=console
+        ) as progress:
+            task = progress.add_task("Decrypting notes...", total=len(titles))
+
+            # Process each note
+            results = {}
+            for title in titles:
+                progress.update(
+                    task, description=f"Decrypting [cyan]{title}[/cyan]...")
+
+                # Skip notes that aren't encrypted
+                if not note_manager.is_note_encrypted(title, category, output_dir):
+                    results[title] = "Not encrypted (skipped)"
+                    progress.advance(task)
+                    continue
+
+                # Decrypt the note
+                success, message = note_manager.decrypt_note(
+                    title, password, category, output_dir)
+                results[title] = message if success else f"Failed: {message}"
+                progress.advance(task)
+
+        # Display results
+        table = Table(title=f"Decryption Results ({len(titles)} notes)")
+        table.add_column("Note", style="cyan")
+        table.add_column("Status", style="bold")
+
+        success_count = 0
+        for title, result in results.items():
+            status_style = "green" if "success" in result.lower(
+            ) else "red" if "failed" in result.lower() else "yellow"
+            table.add_row(title, f"[{status_style}]{result}[/{status_style}]")
+            if "success" in result.lower():
+                success_count += 1
+
+        console.print(table)
+
+        # Summary message
+        console.print(Panel(
+            f"Successfully decrypted {success_count} of {len(titles)} notes.",
+            title="Decryption Summary",
+            border_style="green" if success_count == len(titles) else "yellow"
+        ))
+
+        return 0 if success_count == len(titles) else 1
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+
+
+@encrypt_commands.command(name="change-password")
+@click.argument("title")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--current-password", help="Current password (will prompt if not provided).")
+@click.option("--new-password", help="New password (will prompt if not provided).")
+def change_password(title: str, category: Optional[str], output_dir: Optional[str],
+                    current_password: Optional[str], new_password: Optional[str]):
+    """
+    Change the encryption password for a note.
+
+    TITLE is the title of the encrypted note.
+    """
+    try:
+        # Create encryption-enabled note manager
+        note_manager = EncryptionNoteManager()
+
+        # Check if the note is actually encrypted
+        if not note_manager.is_note_encrypted(title, category, output_dir):
+            console.print(
+                f"[bold red]Error:[/bold red] Note '{title}' is not encrypted.")
+            return 1
+
+        # If current password not provided, prompt for it
+        if not current_password:
+            current_password = prompt_for_password("Enter current password: ")
+
+        # If new password not provided, prompt for it
+        if not new_password:
+            try:
+                new_password = prompt_for_password(
+                    "Enter new password: ", confirm=True)
+            except ValueError as e:
+                console.print(f"[bold red]Error:[/bold red] {str(e)}")
+                return 1
+
+        # Change the password
+        success, message = note_manager.change_encryption_password(
+            title, current_password, new_password, category, output_dir
+        )
+
+        if success:
+            console.print(f"[bold green]Success:[/bold green] {message}")
+            console.print(
+                "[bold yellow]Important:[/bold yellow] Keep your new password safe! There is NO WAY to recover the note if you forget it.")
+            return 0
+        else:
+            console.print(f"[bold red]Error:[/bold red] {message}")
+            return 1
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+
+
+@encrypt_commands.command(name="status")
+@click.argument("title", required=False)
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--all", "-a", is_flag=True, help="Check encryption status of all notes.")
+def encryption_status(title: Optional[str], category: Optional[str], output_dir: Optional[str], all: bool):
+    """
+    Check the encryption status of notes.
+
+    If TITLE is provided, checks that specific note.
+    If --all is specified, checks all notes.
+    """
+    try:
+        # Create encryption-enabled note manager
+        note_manager = EncryptionNoteManager()
+
+        if title and not all:
+            # Check a single note
+            is_encrypted = note_manager.is_note_encrypted(
+                title, category, output_dir)
+            note_path = note_manager.find_note_path(
+                title, category, output_dir)
+
+            if not note_path:
+                console.print(
+                    f"[bold red]Error:[/bold red] Note '{title}' not found.")
+                return 1
+
+            status_text = "[green]Encrypted[/green]" if is_encrypted else "[yellow]Not Encrypted[/yellow]"
+
+            panel = Panel(
+                f"Status: {status_text}\nPath: {note_path}",
+                title=f"Encryption Status: {title}",
+                border_style="cyan"
+            )
+            console.print(panel)
+            return 0
+
+        elif all:
+            # Check all notes
+            from app.utils.file_handler import list_note_files
+
+            # Get all notes
+            source_dir = output_dir or note_manager.notes_dir
+            note_files = list_note_files(source_dir, category)
+
+            if not note_files:
+                console.print("[yellow]No notes found.[/yellow]")
+                return 0
+
+            # Create a table for results
+            table = Table(title=f"Encryption Status ({len(note_files)} notes)")
+            table.add_column("Note", style="cyan")
+            table.add_column("Status", style="bold")
+            table.add_column("Path", style="dim")
+
+            encrypted_count = 0
+            for note_file in note_files:
+                # Extract note title from filename or metadata
+                try:
+                    metadata, _ = note_manager.encryption_manager.read_note_file(
+                        note_file)
+                    title = metadata.get('title', os.path.splitext(
+                        os.path.basename(note_file))[0])
+                except Exception:
+                    title = os.path.splitext(os.path.basename(note_file))[0]
+
+                # Check encryption status
+                is_encrypted = note_manager.encryption_manager.is_note_encrypted(
+                    note_file)
+                if is_encrypted:
+                    encrypted_count += 1
+
+                status_text = "[green]Encrypted[/green]" if is_encrypted else "[yellow]Not Encrypted[/yellow]"
+
+                table.add_row(title, status_text, note_file)
+
+            console.print(table)
+
+            # Summary
+            console.print(f"Total notes: {len(note_files)}")
+            console.print(
+                f"Encrypted: {encrypted_count} ({encrypted_count / len(note_files) * 100:.1f}%)")
+            console.print(
+                f"Unencrypted: {len(note_files) - encrypted_count} ({(len(note_files) - encrypted_count) / len(note_files) * 100:.1f}%)")
+
+            return 0
+        else:
+            # No title or --all specified
+            console.print(
+                "[yellow]Please provide a note title or use the --all option.[/yellow]")
+            return 1
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+
+
+def register_encryption_commands(cli_group):
+    """Register encryption commands with the main CLI group."""
+    cli_group.add_command(encrypt_commands)
+    cli_group.add_command(decrypt_commands)
+
 
 def register_export_commands(cli_group):
     """Register export commands with the main CLI group."""
