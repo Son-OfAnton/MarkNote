@@ -7,7 +7,7 @@ import sys
 import click
 from rich.console import Console
 
-from app.cli.commands import cli, register_encryption_commands, register_link_commands, register_version_commands
+from app.cli.commands import cli, register_archive_commands, register_encryption_commands, register_link_commands, register_version_commands
 
 def main():
     """Main entry point for the application"""
@@ -19,6 +19,8 @@ def main():
     
     register_encryption_commands(cli)
 
+    # Register archive commands
+    register_archive_commands(cli)
 
     # Run the CLI
     return cli()

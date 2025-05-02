@@ -2,6 +2,7 @@
 CLI commands for MarkNote
 """
 from datetime import date, datetime
+import json
 import os
 import sys
 from typing import Dict, List, Optional, Tuple
@@ -19,6 +20,7 @@ from rich.syntax import Syntax
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn
 from app.config.config_manager import get_config_manager, get_daily_note_config
 from app.core.daily_note_service import get_daily_note_service
+from app.core.note_manager_archieve_extension import ArchiveNoteManager
 from app.core.note_manager_extension import EncryptionNoteManager
 import app.models.note
 
@@ -2453,6 +2455,772 @@ def encryption_status(title: Optional[str], category: Optional[str], output_dir:
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {str(e)}")
         return 1
+
+
+@click.group(name="archive")
+def archive_commands():
+    """Archive and manage archived notes."""
+    pass
+
+
+@archive_commands.command(name="note")
+@click.argument("title")
+@click.option("--reason", "-r", help="Reason for archiving the note.")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--move", "-m", is_flag=True, help="Move the note to a dedicated archive directory.")
+def archive_note(title: str, reason: Optional[str], category: Optional[str],
+                 output_dir: Optional[str], move: bool):
+    """
+    Archive a note.
+
+    TITLE is the title of the note to archive.
+    """
+    try:
+        # Create archive-enabled note manager
+        note_manager = ArchiveNoteManager()
+
+        # Check if the note is already archived
+        if note_manager.is_note_archived(title, category, output_dir):
+            console.print(
+                f"[yellow]Note '{title}' is already archived.[/yellow]")
+            return 0
+
+        # Archive the note
+        success, message = note_manager.archive_note(
+            title=title,
+            reason=reason,
+            category=category,
+            output_dir=output_dir,
+            move_to_archive_dir=move
+        )
+
+        if success:
+            console.print(f"[bold green]Success:[/bold green] {message}")
+            console.print(
+                "[blue]Note has been marked as 'Archived' and tagged with 'Archived'.[/blue]")
+            return 0
+        else:
+            console.print(f"[bold red]Error:[/bold red] {message}")
+            return 1
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+
+
+@archive_commands.command(name="unarchive")
+@click.argument("title")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--move", "-m", is_flag=True, help="Move the note from the archive directory.")
+@click.option("--destination", "-d", help="Destination directory for the unarchived note.")
+def unarchive_note(title: str, category: Optional[str], output_dir: Optional[str],
+                   move: bool, destination: Optional[str]):
+    """
+    Unarchive an archived note.
+
+    TITLE is the title of the note to unarchive.
+    """
+    try:
+        # Create archive-enabled note manager
+        note_manager = ArchiveNoteManager()
+
+        # Check if the note exists and is archived
+        if not note_manager.is_note_archived(title, category, output_dir):
+            # Try archive directory if specified in options
+            if output_dir:
+                console.print(
+                    f"[bold red]Error:[/bold red] Note '{title}' is not archived.")
+                return 1
+
+            # Try to find in archive directory
+            archive_dir = os.path.join(note_manager.notes_dir, "archive")
+            if not note_manager.is_note_archived(title, category, archive_dir):
+                console.print(
+                    f"[bold red]Error:[/bold red] Note '{title}' is not found or not archived.")
+                return 1
+
+        # Unarchive the note
+        success, message = note_manager.unarchive_note(
+            title=title,
+            category=category,
+            output_dir=output_dir,
+            move_from_archive_dir=move,
+            destination_dir=destination
+        )
+
+        if success:
+            console.print(f"[bold green]Success:[/bold green] {message}")
+            console.print(
+                "[blue]Note has been unmarked as 'Archived' and the 'Archived' tag has been removed.[/blue]")
+            return 0
+        else:
+            console.print(f"[bold red]Error:[/bold red] {message}")
+            return 1
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+
+
+@archive_commands.command(name="list")
+@click.option("--category", "-c", help="Filter notes by category.")
+@click.option("--output", "-o", help="Output format: table (default), json, or markdown.")
+@click.option("--sort-by", type=click.Choice(['title', 'date', 'category', 'size']), default='date',
+              help="Sort archived notes by: title, date, category, or size.")
+@click.option("--reverse", "-r", is_flag=True, help="Reverse the sorting order.")
+def list_archived_notes(category: Optional[str], output: Optional[str],
+                        sort_by: str, reverse: bool):
+    """
+    List all archived notes.
+    """
+    try:
+        # Create archive-enabled note manager
+        note_manager = ArchiveNoteManager()
+
+        # Get all archived notes
+        archived_notes = note_manager.list_archived_notes(
+            include_content=False, category=category)
+
+        if not archived_notes:
+            console.print("[yellow]No archived notes found.[/yellow]")
+            return 0
+
+        # Sort the notes
+        if sort_by == 'title':
+            archived_notes.sort(key=lambda x: x.get(
+                'title', ''), reverse=reverse)
+        elif sort_by == 'date':
+            archived_notes.sort(key=lambda x: x.get(
+                'archived_at', ''), reverse=not reverse)  # Reverse logic for dates
+        elif sort_by == 'category':
+            archived_notes.sort(key=lambda x: x.get(
+                'category', ''), reverse=reverse)
+        elif sort_by == 'size':
+            archived_notes.sort(key=lambda x: x.get(
+                'size_bytes', 0), reverse=not reverse)  # Larger size first
+
+        # Output format
+        output_format = output.lower() if output else 'table'
+
+        if output_format == 'json':
+            # JSON output
+            console.print(json.dumps(archived_notes, indent=2))
+
+        elif output_format == 'markdown':
+            # Markdown output
+            md = "# Archived Notes\n\n"
+            md += f"*{len(archived_notes)} archived notes found*\n\n"
+
+            md += "| Title | Category | Archived Date | Reason |\n"
+            md += "|-------|----------|--------------|--------|\n"
+
+            for note in archived_notes:
+                title = note.get('title', 'Untitled')
+                category = note.get('category', 'Uncategorized')
+                archived_date = note.get('archived_at', 'Unknown')
+                if archived_date:
+                    try:
+                        date = datetime.fromisoformat(archived_date)
+                        archived_date = date.strftime('%Y-%m-%d')
+                    except (ValueError, TypeError):
+                        pass
+
+                reason = note.get('archive_reason', 'No reason specified')
+
+                md += f"| {title} | {category} | {archived_date} | {reason} |\n"
+
+            console.print(Markdown(md))
+
+        else:
+            # Table output (default)
+            table = Table(title=f"Archived Notes ({len(archived_notes)})")
+            table.add_column("Title", style="cyan")
+            table.add_column("Category", style="blue")
+            table.add_column("Archived Date", style="yellow")
+            table.add_column("Size", style="green")
+            table.add_column("Reason", style="dim")
+
+            for note in archived_notes:
+                title = note.get('title', 'Untitled')
+                category = note.get('category', 'Uncategorized')
+
+                # Format date
+                archived_date = note.get('archived_at', 'Unknown')
+                if archived_date:
+                    try:
+                        date = datetime.fromisoformat(archived_date)
+                        archived_date = date.strftime('%Y-%m-%d')
+                    except (ValueError, TypeError):
+                        pass
+
+                # Format size
+                size_bytes = note.get('size_bytes', 0)
+                if size_bytes < 1024:
+                    size_str = f"{size_bytes} B"
+                elif size_bytes < 1024 * 1024:
+                    size_str = f"{size_bytes / 1024:.1f} KB"
+                else:
+                    size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
+
+                reason = note.get('archive_reason', 'No reason specified')
+
+                table.add_row(title, category, archived_date, size_str, reason)
+
+            console.print(table)
+
+        return 0
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+
+
+@archive_commands.command(name="stats")
+@click.option("--output", "-o", help="Output format: panel (default), json, or markdown.")
+def archive_stats(output: Optional[str]):
+    """
+    Display statistics about archived notes.
+    """
+    try:
+        # Create archive-enabled note manager
+        note_manager = ArchiveNoteManager()
+
+        # Get archive stats
+        stats = note_manager.get_archive_stats()
+
+        if stats['total_archived'] == 0:
+            console.print("[yellow]No archived notes found.[/yellow]")
+            return 0
+
+        # Output format
+        output_format = output.lower() if output else 'panel'
+
+        if output_format == 'json':
+            # JSON output
+            console.print(json.dumps(stats, indent=2))
+
+        elif output_format == 'markdown':
+            # Markdown output
+            md = "# Archive Statistics\n\n"
+            md += f"**Total archived notes:** {stats['total_archived']}\n"
+
+            # Format storage size
+            storage_bytes = stats.get('storage_bytes', 0)
+            if storage_bytes < 1024:
+                storage_str = f"{storage_bytes} B"
+            elif storage_bytes < 1024 * 1024:
+                storage_str = f"{storage_bytes / 1024:.1f} KB"
+            else:
+                storage_str = f"{storage_bytes / (1024 * 1024):.1f} MB"
+
+            md += f"**Total storage used:** {storage_str}\n"
+
+            # Date information
+            if stats['oldest_archive']:
+                try:
+                    oldest = datetime.fromisoformat(stats['oldest_archive'])
+                    md += f"**Oldest archive:** {oldest.strftime('%Y-%m-%d')}\n"
+                except (ValueError, TypeError):
+                    md += f"**Oldest archive:** {stats['oldest_archive']}\n"
+
+            if stats['newest_archive']:
+                try:
+                    newest = datetime.fromisoformat(stats['newest_archive'])
+                    md += f"**Newest archive:** {newest.strftime('%Y-%m-%d')}\n"
+                except (ValueError, TypeError):
+                    md += f"**Newest archive:** {stats['newest_archive']}\n"
+
+            # Categories
+            if stats['categories']:
+                md += "\n## Categories\n\n"
+                for category, count in sorted(stats['categories'].items(), key=lambda x: x[1], reverse=True):
+                    md += f"- **{category}:** {count}\n"
+
+            # Tags
+            if stats['tags']:
+                md += "\n## Tags\n\n"
+                for tag, count in sorted(stats['tags'].items(), key=lambda x: x[1], reverse=True):
+                    md += f"- **{tag}:** {count}\n"
+
+            # Reasons
+            if stats['archive_reasons']:
+                md += "\n## Archive Reasons\n\n"
+                for reason, count in sorted(stats['archive_reasons'].items(), key=lambda x: x[1], reverse=True):
+                    if reason is None:
+                        reason = "No reason specified"
+                    md += f"- **{reason}:** {count}\n"
+
+            console.print(Markdown(md))
+
+        else:
+            # Panel output (default)
+            # Format storage size
+            storage_bytes = stats.get('storage_bytes', 0)
+            if storage_bytes < 1024:
+                storage_str = f"{storage_bytes} B"
+            elif storage_bytes < 1024 * 1024:
+                storage_str = f"{storage_bytes / 1024:.1f} KB"
+            else:
+                storage_str = f"{storage_bytes / (1024 * 1024):.1f} MB"
+
+            # Create summary panel
+            summary = f"Total archived notes: {stats['total_archived']}\n"
+            summary += f"Total storage used: {storage_str}\n"
+
+            if stats['oldest_archive']:
+                try:
+                    oldest = datetime.fromisoformat(stats['oldest_archive'])
+                    summary += f"Oldest archive: {oldest.strftime('%Y-%m-%d')}\n"
+                except (ValueError, TypeError):
+                    summary += f"Oldest archive: {stats['oldest_archive']}\n"
+
+            if stats['newest_archive']:
+                try:
+                    newest = datetime.fromisoformat(stats['newest_archive'])
+                    summary += f"Newest archive: {newest.strftime('%Y-%m-%d')}\n"
+                except (ValueError, TypeError):
+                    summary += f"Newest archive: {stats['newest_archive']}\n"
+
+            console.print(
+                Panel(summary, title="Archive Summary", border_style="blue"))
+
+            # Categories table
+            if stats['categories']:
+                categories_table = Table(title="Categories")
+                categories_table.add_column("Category", style="cyan")
+                categories_table.add_column(
+                    "Count", style="green", justify="right")
+
+                for category, count in sorted(stats['categories'].items(), key=lambda x: x[1], reverse=True):
+                    categories_table.add_row(category, str(count))
+
+                console.print(categories_table)
+
+            # Tags table
+            if stats['tags']:
+                tags_table = Table(title="Tags")
+                tags_table.add_column("Tag", style="cyan")
+                tags_table.add_column("Count", style="green", justify="right")
+
+                for tag, count in sorted(stats['tags'].items(), key=lambda x: x[1], reverse=True):
+                    tags_table.add_row(tag, str(count))
+
+                console.print(tags_table)
+
+            # Reasons table
+            if stats['archive_reasons']:
+                reasons_table = Table(title="Archive Reasons")
+                reasons_table.add_column("Reason", style="cyan")
+                reasons_table.add_column(
+                    "Count", style="green", justify="right")
+
+                for reason, count in sorted(stats['archive_reasons'].items(), key=lambda x: x[1], reverse=True):
+                    if reason is None:
+                        reason = "No reason specified"
+                    reasons_table.add_row(reason, str(count))
+
+                console.print(reasons_table)
+
+        return 0
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+
+
+@archive_commands.command(name="batch")
+@click.argument("titles", nargs=-1, required=True)
+@click.option("--reason", "-r", help="Reason for archiving the notes.")
+@click.option("--category", "-c", help="Category of the notes.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+@click.option("--move", "-m", is_flag=True, help="Move notes to a dedicated archive directory.")
+def batch_archive(titles: List[str], reason: Optional[str], category: Optional[str],
+                  output_dir: Optional[str], move: bool):
+    """
+    Archive multiple notes.
+
+    TITLES is a space-separated list of note titles to archive.
+    """
+    try:
+        if not titles:
+            console.print("[bold yellow]No titles provided.[/bold yellow]")
+            return 0
+
+        # Create archive-enabled note manager
+        note_manager = ArchiveNoteManager()
+
+        # Show progress spinner for each note
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            console=console
+        ) as progress:
+            task = progress.add_task("Archiving notes...", total=len(titles))
+
+            # Process each note
+            results = {}
+            for title in titles:
+                progress.update(
+                    task, description=f"Archiving [cyan]{title}[/cyan]...")
+
+                # Skip notes that are already archived
+                if note_manager.is_note_archived(title, category, output_dir):
+                    results[title] = "Already archived (skipped)"
+                    progress.advance(task)
+                    continue
+
+                # Archive the note
+                success, message = note_manager.archive_note(
+                    title=title,
+                    reason=reason,
+                    category=category,
+                    output_dir=output_dir,
+                    move_to_archive_dir=move
+                )
+
+                results[title] = message if success else f"Failed: {message}"
+                progress.advance(task)
+
+            # If no titles were processed, exit
+            if not results:
+                console.print("[yellow]No notes found to archive.[/yellow]")
+                return 0
+
+        # Display results
+        table = Table(title=f"Archiving Results ({len(titles)} notes)")
+        table.add_column("Note", style="cyan")
+        table.add_column("Status", style="bold")
+
+        success_count = 0
+        for title, result in results.items():
+            status_style = "green" if "success" in result.lower(
+            ) else "red" if "failed" in result.lower() else "yellow"
+            table.add_row(title, f"[{status_style}]{result}[/{status_style}]")
+            if "success" in result.lower():
+                success_count += 1
+
+        console.print(table)
+
+        # Summary message
+        console.print(Panel(
+            f"Successfully archived {success_count} of {len(titles)} notes.",
+            title="Archiving Summary",
+            border_style="green" if success_count == len(titles) else "yellow"
+        ))
+
+        return 0 if success_count == len(titles) else 1
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+
+
+@archive_commands.command(name="auto")
+@click.option("--days", "-d", type=int, required=True, help="Archive notes older than this many days.")
+@click.option("--reason", "-r", default="Auto-archived due to age",
+              help="Reason for archiving the notes.")
+@click.option("--move", "-m", is_flag=True, default=True,
+              help="Move notes to a dedicated archive directory.")
+@click.option("--dry-run", is_flag=True, help="Show what would be archived without archiving.")
+def auto_archive(days: int, reason: str, move: bool, dry_run: bool):
+    """
+    Auto-archive notes that haven't been updated in the specified number of days.
+    """
+    try:
+        if days < 1:
+            console.print(
+                "[bold red]Error:[/bold red] Days must be a positive number.")
+            return 1
+
+        console.print(f"Finding notes older than [cyan]{days}[/cyan] days...")
+
+        # Create archive-enabled note manager
+        note_manager = ArchiveNoteManager()
+
+        if dry_run:
+            # Find notes that would be archived without actually archiving
+            from datetime import datetime, timedelta
+            cutoff_date = datetime.now() - timedelta(days=days)
+
+            console.print(
+                f"Cutoff date: [yellow]{cutoff_date.strftime('%Y-%m-%d')}[/yellow]")
+            console.print("Scanning notes...")
+
+            # Get all note files
+            from app.utils.file_handler import list_note_files
+            all_notes = list_note_files(note_manager.notes_dir)
+
+            to_archive = []
+
+            for note_path in all_notes:
+                try:
+                    # Skip notes that are already in the archive directory
+                    if "archive" in note_path:
+                        continue
+
+                    # Read the note
+                    from app.utils.file_handler import read_note_file
+                    metadata, _ = read_note_file(note_path)
+
+                    # Skip notes that are already archived
+                    if metadata.get('is_archived', False):
+                        continue
+
+                    # Check the last update date
+                    updated_at = None
+                    if 'updated_at' in metadata:
+                        try:
+                            updated_at = datetime.fromisoformat(
+                                metadata['updated_at'])
+                        except (ValueError, TypeError):
+                            # If parsing fails, use file modification time
+                            updated_at = datetime.fromtimestamp(
+                                os.path.getmtime(note_path))
+                    else:
+                        # Use file modification time if metadata doesn't include update time
+                        updated_at = datetime.fromtimestamp(
+                            os.path.getmtime(note_path))
+
+                    # Archive if older than cutoff date
+                    if updated_at < cutoff_date:
+                        title = metadata.get('title', os.path.splitext(
+                            os.path.basename(note_path))[0])
+                        category = metadata.get('category', None) or os.path.basename(
+                            os.path.dirname(note_path))
+                        to_archive.append({
+                            'title': title,
+                            'path': note_path,
+                            'updated_at': updated_at,
+                            'category': category,
+                            'days_old': (datetime.now() - updated_at).days
+                        })
+                except Exception:
+                    # Skip files that can't be read
+                    pass
+
+            if not to_archive:
+                console.print(
+                    "[green]No notes found that would be auto-archived.[/green]")
+                return 0
+
+            # Display notes that would be archived
+            table = Table(
+                title=f"Notes That Would Be Archived ({len(to_archive)})")
+            table.add_column("Title", style="cyan")
+            table.add_column("Category", style="blue")
+            table.add_column("Last Updated", style="yellow")
+            table.add_column("Days Old", style="red")
+
+            for note in sorted(to_archive, key=lambda x: x['days_old'], reverse=True):
+                table.add_row(
+                    note['title'],
+                    note['category'],
+                    note['updated_at'].strftime('%Y-%m-%d'),
+                    str(note['days_old'])
+                )
+
+            console.print(table)
+            console.print(
+                f"[bold yellow]Dry run - no changes made.[/bold yellow]")
+
+            # Ask if user wants to proceed with archiving
+            if Confirm.ask("Do you want to archive these notes now?"):
+                console.print(
+                    "[bold blue]Proceeding with archiving...[/bold blue]")
+            else:
+                console.print(
+                    "[bold blue]Exiting without archiving.[/bold blue]")
+                return 0
+
+        # Show progress spinner
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeRemainingColumn(),
+            console=console
+        ) as progress:
+            task = progress.add_task("Auto-archiving notes...", total=None)
+
+            # Auto-archive notes
+            results = note_manager.auto_archive_by_age(
+                days=days,
+                reason=reason,
+                move_to_archive_dir=move
+            )
+
+            # Complete the progress
+            progress.update(task, completed=True, total=1)
+
+        # Check results
+        if not results:
+            console.print("[green]No notes were auto-archived.[/green]")
+            return 0
+
+        # Count successes and failures
+        success_count = list(results.values()).count(
+            "Successfully archived and moved to archive directory")
+        success_count += list(results.values()).count("Successfully archived")
+
+        # Display results
+        table = Table(title=f"Auto-Archive Results ({len(results)} notes)")
+        table.add_column("Note", style="cyan")
+        table.add_column("Status", style="bold")
+
+        # Sort by path - group by directory
+        for path, result in sorted(results.items()):
+            note_name = os.path.splitext(os.path.basename(path))[0]
+            status_style = "green" if "success" in result.lower(
+            ) else "red" if "failed" in result.lower() else "yellow"
+            table.add_row(
+                note_name, f"[{status_style}]{result}[/{status_style}]")
+
+        console.print(table)
+
+        # Summary message
+        console.print(Panel(
+            f"Auto-archived {success_count} notes that were older than {days} days.",
+            title="Auto-Archive Summary",
+            border_style="green" if success_count > 0 else "yellow"
+        ))
+
+        return 0
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+
+
+@archive_commands.command(name="status")
+@click.argument("title", required=False)
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look for notes.")
+def archive_status(title: Optional[str], category: Optional[str], output_dir: Optional[str]):
+    """
+    Check the archive status of a note or get general archive stats.
+
+    If TITLE is provided, checks that specific note.
+    If not, provides general archive statistics.
+    """
+    try:
+        # Create archive-enabled note manager
+        note_manager = ArchiveNoteManager()
+
+        if title:
+            # Check a single note
+            is_archived = note_manager.is_note_archived(
+                title, category, output_dir)
+
+            if not is_archived:
+                # Try archive directory
+                archive_dir = os.path.join(note_manager.notes_dir, "archive")
+                if category:
+                    archive_cat_dir = os.path.join(archive_dir, category)
+                    is_archived = note_manager.is_note_archived(
+                        title, None, archive_cat_dir)
+
+                if not is_archived:
+                    is_archived = note_manager.is_note_archived(
+                        title, None, archive_dir)
+
+            # Get note path
+            note_path = note_manager.find_note_path(
+                title, category, output_dir)
+
+            if not note_path:
+                # Try archive directory
+                archive_dir = os.path.join(note_manager.notes_dir, "archive")
+                if category:
+                    archive_cat_dir = os.path.join(archive_dir, category)
+                    note_path = note_manager.find_note_path(
+                        title, None, archive_cat_dir)
+
+                if not note_path:
+                    note_path = note_manager.find_note_path(
+                        title, None, archive_dir)
+
+            if not note_path:
+                console.print(
+                    f"[bold red]Error:[/bold red] Note '{title}' not found.")
+                return 1
+
+            status_text = "[green]Archived[/green]" if is_archived else "[yellow]Not Archived[/yellow]"
+
+            # If archived, get additional details
+            additional_info = ""
+            if is_archived:
+                metadata, _ = note_manager.archive_manager.read_note_file(
+                    note_path)
+                archived_at = metadata.get('archived_at')
+                if archived_at:
+                    try:
+                        date = datetime.fromisoformat(archived_at)
+                        additional_info += f"Archived on: {date.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    except (ValueError, TypeError):
+                        additional_info += f"Archived on: {archived_at}\n"
+
+                reason = metadata.get('archive_reason')
+                if reason:
+                    additional_info += f"Reason: {reason}\n"
+
+            panel = Panel(
+                f"Status: {status_text}\n"
+                f"Path: {note_path}\n"
+                f"{additional_info}",
+                title=f"Archive Status: {title}",
+                border_style="cyan"
+            )
+            console.print(panel)
+
+        else:
+            # No title provided, show archive stats
+            stats = note_manager.get_archive_stats()
+
+            # Format storage size
+            storage_bytes = stats.get('storage_bytes', 0)
+            if storage_bytes < 1024:
+                storage_str = f"{storage_bytes} B"
+            elif storage_bytes < 1024 * 1024:
+                storage_str = f"{storage_bytes / 1024:.1f} KB"
+            else:
+                storage_str = f"{storage_bytes / (1024 * 1024):.1f} MB"
+
+            # Create summary panel
+            summary = f"Total archived notes: {stats['total_archived']}\n"
+            summary += f"Total storage used: {storage_str}\n"
+
+            if stats['oldest_archive']:
+                try:
+                    oldest = datetime.fromisoformat(stats['oldest_archive'])
+                    summary += f"Oldest archive: {oldest.strftime('%Y-%m-%d')}\n"
+                except (ValueError, TypeError):
+                    summary += f"Oldest archive: {stats['oldest_archive']}\n"
+
+            if stats['newest_archive']:
+                try:
+                    newest = datetime.fromisoformat(stats['newest_archive'])
+                    summary += f"Newest archive: {newest.strftime('%Y-%m-%d')}\n"
+                except (ValueError, TypeError):
+                    summary += f"Newest archive: {stats['newest_archive']}\n"
+
+            console.print(
+                Panel(summary, title="Archive Statistics", border_style="blue"))
+
+        return 0
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+
+
+def register_archive_commands(cli_group):
+    """Register archive commands with the main CLI group."""
+    cli_group.add_command(archive_commands)
 
 
 def register_encryption_commands(cli_group):
