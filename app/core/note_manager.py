@@ -1,6 +1,7 @@
 """
 Core note management functionality for MarkNote.
 """
+from collections import Counter
 import os
 from typing import List, Optional, Dict, Any, Set, Tuple
 from datetime import date as dt, datetime
@@ -1603,3 +1604,129 @@ class NoteManager:
                 return path
         
         return None
+    
+    def get_notes_count(self, 
+                   tag: Optional[str] = None,
+                   category: Optional[str] = None,
+                   output_dir: Optional[str] = None) -> int:
+        """
+        Get the total number of notes in the system, optionally filtered by tag or category.
+        
+        Args:
+            tag: Optional tag to filter by.
+            category: Optional category to filter by.
+            output_dir: Optional specific directory to look for the notes.
+                        This overrides the notes_dir for this specific count.
+        
+        Returns:
+            The total number of notes matching the criteria.
+        """
+        # Reuse the existing list_notes method to get filtered notes
+        notes = self.list_notes(
+            tag=tag,
+            category=category,
+            output_dir=output_dir
+        )
+        
+        # Return the count of notes
+        return len(notes)
+    
+    def get_most_frequent_tag(self, 
+                          category: Optional[str] = None,
+                          output_dir: Optional[str] = None) -> Tuple[Optional[str], int, Dict[str, int]]:
+        """
+        Get the most frequently used tag across all notes.
+        
+        Args:
+            category: Optional category to filter notes by.
+            output_dir: Optional specific directory to look for the notes.
+                        This overrides the notes_dir for this specific operation.
+        
+        Returns:
+            A tuple containing:
+            - The most frequent tag (or None if no tags found)
+            - The count of notes with this tag
+            - A dictionary of all tags with their counts
+        """
+        # Get all notes using existing method
+        notes = self.list_notes(category=category, output_dir=output_dir)
+        
+        # If no notes found, return None
+        if not notes:
+            return None, 0, {}
+        
+        # Create a counter for all tags
+        tag_counter = Counter()
+        
+        # Count occurrences of each tag
+        for note in notes:
+            for tag in note.tags:
+                tag_counter[tag] += 1
+        
+        # If no tags found, return None
+        if not tag_counter:
+            return None, 0, {}
+        
+        # Get the most common tag
+        most_common_tag, count = tag_counter.most_common(1)[0]
+        
+        # Return the most common tag, its count, and the full counter dict
+        return most_common_tag, count, dict(tag_counter)
+    
+    def get_notes_per_category(self, 
+                         tag: Optional[str] = None,
+                         output_dir: Optional[str] = None) -> Dict[str, int]:
+        """
+        Get the count of notes per category, optionally filtered by tag.
+        
+        Args:
+            tag: Optional tag to filter by.
+            output_dir: Optional specific directory to look for the notes.
+                        This overrides the notes_dir for this specific count.
+        
+        Returns:
+            A dictionary with category names as keys and note counts as values.
+            Notes without a category are counted under the key "(uncategorized)".
+        """
+        # Get all notes with the tag filter if provided
+        all_notes = self.list_notes(tag=tag, output_dir=output_dir)
+        
+        # Initialize results dictionary
+        category_counts = {}
+        
+        # Count notes by category
+        for note in all_notes:
+            category = note.category if note.category else "(uncategorized)"
+            if category in category_counts:
+                category_counts[category] += 1
+            else:
+                category_counts[category] = 1
+        
+        return category_counts
+    
+    def get_note_word_count(self, title: str, category: Optional[str] = None,
+                       output_dir: Optional[str] = None) -> Tuple[bool, str, Optional[Dict[str, int]]]:
+        """
+        Get word count statistics for a note.
+        
+        Args:
+            title: The title of the note.
+            category: Optional category of the note.
+            output_dir: Optional specific directory to look for the note.
+                        This overrides the notes_dir for this specific lookup.
+                        
+        Returns:
+            A tuple of (success, message, statistics)
+            - success: True if the note was found, False otherwise
+            - message: Success or error message
+            - statistics: Dictionary of statistics if success is True, None otherwise
+        """
+        note = self.get_note(title, category, output_dir)
+        
+        if not note:
+            return False, f"Note '{title}' not found.", None
+            
+        # Get statistics
+        stats = note.get_statistics()
+        
+        return True, f"Statistics for note '{title}'", stats

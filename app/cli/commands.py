@@ -3218,6 +3218,350 @@ def archive_status(title: Optional[str], category: Optional[str], output_dir: Op
         return 1
 
 
+@cli.command()
+@click.option("--tag", "-t", help="Filter notes by tag.")
+@click.option("--category", "-c", help="Filter notes by category.")
+@click.option("--output-dir", "-o", help="Custom output directory for notes.")
+@click.option("--detail/--no-detail", "-d/-n", default=False,
+              help="Show detailed breakdown by category and tags.")
+def count(tag: Optional[str] = None,
+          category: Optional[str] = None,
+          output_dir: Optional[str] = None,
+          detail: bool = False):
+    """
+    Count the total number of notes in the system.
+    """
+    note_manager = NoteManager(output_dir)
+
+    # Get total count
+    total_count = note_manager.get_notes_count(
+        tag=tag,
+        category=category,
+        output_dir=output_dir
+    )
+
+    # Create a panel with the count information
+    if not detail:
+        # Simple count display
+        count_text = f"Total notes: {total_count}"
+        if tag:
+            count_text += f" (filtered by tag: {tag})"
+        if category:
+            count_text += f" (filtered by category: {category})"
+
+        panel = Panel(
+            count_text,
+            title="Note Count",
+            border_style="blue"
+        )
+        console.print(panel)
+    else:
+        # Detailed breakdown
+        table = Table(title="Note Statistics")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Count", style="green")
+
+        # Add total count row
+        table.add_row("Total Notes", str(total_count))
+
+        # Get counts by category if no category filter is applied
+        if not category:
+            # Get all categories
+            categories = []
+            base_dir = output_dir if output_dir else note_manager.notes_dir
+            base_dir = os.path.expanduser(base_dir)
+
+            if os.path.exists(base_dir):
+                for item in os.listdir(base_dir):
+                    item_path = os.path.join(base_dir, item)
+                    if os.path.isdir(item_path) and not item.startswith('.'):
+                        categories.append(item)
+
+            # Add empty / uncategorized category
+            categories.append("(uncategorized)")
+
+            # Add a section header for categories
+            table.add_row("", "")
+            table.add_row("By Category", "")
+
+            # Count notes in each category
+            for cat in categories:
+                filter_category = None if cat == "(uncategorized)" else cat
+                count = note_manager.get_notes_count(
+                    tag=tag, category=filter_category, output_dir=output_dir)
+                if count > 0:  # Only show categories with notes
+                    table.add_row(cat, str(count))
+
+        # Get counts by tags if tag filter is not applied
+        if not tag:
+            # Get all notes to extract tags
+            notes = note_manager.list_notes(
+                category=category, output_dir=output_dir)
+
+            # Count notes by tag
+            tag_counts = {}
+            for note in notes:
+                for note_tag in note.tags:
+                    tag_counts[note_tag] = tag_counts.get(note_tag, 0) + 1
+
+            if tag_counts:
+                # Add a section header for tags
+                table.add_row("", "")
+                table.add_row("By Tag", "")
+
+                # Sort tags by count (descending)
+                sorted_tags = sorted(tag_counts.items(),
+                                     key=lambda x: x[1], reverse=True)
+
+                # Show top 10 tags
+                for tag_name, tag_count in sorted_tags[:10]:
+                    table.add_row(tag_name, str(tag_count))
+
+                # Indicate if there are more tags
+                if len(sorted_tags) > 10:
+                    table.add_row(
+                        "...", f"(and {len(sorted_tags) - 10} more tags)")
+            else:
+                table.add_row("No tags found", "")
+
+        # Display the table
+        console.print(table)
+
+
+@cli.command()
+@click.option("--category", "-c", help="Filter notes by category.")
+@click.option("--output-dir", "-o", help="Custom output directory for notes.")
+@click.option("--top", "-t", type=int, default=1,
+              help="Show top N most frequent tags (default: 1).")
+@click.option("--all/--no-all", "-a/-n", default=False,
+              help="Show all tags sorted by frequency.")
+def tags(category: Optional[str] = None,
+         output_dir: Optional[str] = None,
+         top: int = 1,
+         all: bool = False):
+    """
+    Show the most frequently used tags in your notes.
+    """
+    note_manager = NoteManager(output_dir)
+
+    # Get most frequent tag and all tag counts
+    most_frequent, count, tag_counts = note_manager.get_most_frequent_tag(
+        category=category,
+        output_dir=output_dir
+    )
+
+    # Create a table for the tags
+    table = Table(title="Tag Statistics")
+    table.add_column("Rank", style="cyan", justify="right")
+    table.add_column("Tag", style="green")
+    table.add_column("Count", style="blue", justify="right")
+    table.add_column("Percentage", style="yellow", justify="right")
+
+    # If no tags found
+    if not most_frequent:
+        if category:
+            message = f"No tags found in category '{category}'."
+        else:
+            message = "No tags found in any notes."
+
+        console.print(
+            Panel(message, title="Tag Statistics", border_style="red"))
+        return
+
+    # Get total number of tags
+    total_tags = sum(tag_counts.values())
+
+    if all:
+        # Show all tags sorted by frequency
+        sorted_tags = sorted(tag_counts.items(), key=lambda x: (-x[1], x[0]))
+        for rank, (tag, tag_count) in enumerate(sorted_tags, 1):
+            percentage = (tag_count / total_tags) * 100
+            table.add_row(
+                f"{rank}",
+                tag,
+                f"{tag_count}",
+                f"{percentage:.1f}%"
+            )
+    else:
+        # Show only top N tags
+        sorted_tags = sorted(tag_counts.items(), key=lambda x: (-x[1], x[0]))
+        for rank, (tag, tag_count) in enumerate(sorted_tags[:top], 1):
+            percentage = (tag_count / total_tags) * 100
+            table.add_row(
+                f"{rank}",
+                tag,
+                f"{tag_count}",
+                f"{percentage:.1f}%"
+            )
+
+        # If there are more tags, show a summary row
+        remaining_tags = len(tag_counts) - top
+        if remaining_tags > 0:
+            remaining_count = sum(count for _, count in sorted_tags[top:])
+            remaining_percentage = (remaining_count / total_tags) * 100
+            table.add_row(
+                "...",
+                f"({remaining_tags} more tags)",
+                f"{remaining_count}",
+                f"{remaining_percentage:.1f}%"
+            )
+
+    # Add a summary footer
+    table.add_row("", "", "", "")
+    table.add_row(
+        "Total", f"{len(tag_counts)} unique tags", f"{total_tags}", "100.0%")
+
+    # Display the results
+    console.print(table)
+
+    # Also display some insights
+    if most_frequent and not all and top == 1:
+        most_frequent_percentage = (count / total_tags) * 100
+        insights = [
+            f"Most frequent tag: '[bold green]{most_frequent}[/bold green]' (used in {count} notes)",
+            f"This tag represents [bold yellow]{most_frequent_percentage:.1f}%[/bold yellow] of all tag usage."
+        ]
+        console.print(Panel("\n".join(insights),
+                      title="Tag Insights", border_style="blue"))
+
+
+@cli.command()
+@click.option("--tag", "-t", help="Filter notes by tag.")
+@click.option("--output-dir", "-o", help="Custom output directory for notes.")
+@click.option("--sort-by", "-s", type=click.Choice(['name', 'count']), default='count',
+              help="Sort categories by name or count.")
+@click.option("--reverse/--no-reverse", "-r/-n", default=False,
+              help="Reverse the sort order.")
+@click.option("--output", type=click.Choice(['text', 'table', 'json', 'markdown']), default='table',
+              help="Output format.")
+def categories(tag: Optional[str] = None,
+               output_dir: Optional[str] = None,
+               sort_by: str = 'count',
+               reverse: bool = False,
+               output: str = 'table'):
+    """
+    Show the number of notes per category.
+    """
+    note_manager = NoteManager(output_dir)
+
+    # Get category counts
+    category_counts = note_manager.get_notes_per_category(
+        tag=tag,
+        output_dir=output_dir
+    )
+
+    # If no categories found
+    if not category_counts:
+        console.print("No categories found.", style="yellow")
+        return
+
+    # Get total notes count for reference
+    total_notes = sum(category_counts.values())
+
+    # Sort the categories
+    if sort_by == 'name':
+        # Sort alphabetically by category name
+        sorted_categories = sorted(
+            category_counts.items(),
+            reverse=reverse
+        )
+    else:
+        # Sort by note count (default)
+        sorted_categories = sorted(
+            category_counts.items(),
+            key=lambda x: x[1],  # Sort by count
+            reverse=not reverse  # Default to highest count first
+        )
+
+    # Format the output based on selected format
+    if output == 'json':
+        # JSON output
+        json_data = {
+            "total_notes": total_notes,
+            "categories": dict(sorted_categories)
+        }
+        console.print(json.dumps(json_data, indent=2))
+
+    elif output == 'markdown':
+        # Markdown table output
+        console.print("# Note Categories\n")
+        console.print(f"Total notes: {total_notes}\n")
+        console.print("| Category | Count | Percentage |")
+        console.print("|----------|-------|------------|")
+
+        for category, count in sorted_categories:
+            percentage = (count / total_notes) * 100 if total_notes > 0 else 0
+            console.print(f"| {category} | {count} | {percentage:.1f}% |")
+
+    elif output == 'text':
+        # Simple text output
+        console.print(f"Total notes: {total_notes}\n")
+        for category, count in sorted_categories:
+            percentage = (count / total_notes) * 100 if total_notes > 0 else 0
+            console.print(f"{category}: {count} ({percentage:.1f}%)")
+
+    else:
+        # Rich table output (default)
+        table = Table(title="Notes per Category")
+        table.add_column("Category", style="cyan")
+        table.add_column("Count", style="green", justify="right")
+        table.add_column("Percentage", justify="right")
+
+        for category, count in sorted_categories:
+            percentage = (count / total_notes) * 100 if total_notes > 0 else 0
+            table.add_row(
+                category,
+                str(count),
+                f"{percentage:.1f}%"
+            )
+
+        # Add total row
+        table.add_row("Total", str(total_notes), "100.0%", style="bold")
+
+        # Print additional info
+        if tag:
+            console.print(f"[italic]Notes filtered by tag: {tag}[/italic]\n")
+
+        console.print(table)
+
+@cli.command()
+@click.argument("title")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Custom directory to look in. Overrides the default location.")
+def wordcount(title: str, category: Optional[str] = None, output_dir: Optional[str] = None):
+    """
+    Display word count and other statistics for the note with the given TITLE.
+    """
+    note_manager = NoteManager(output_dir)
+    success, message, stats = note_manager.get_note_word_count(
+        title=title,
+        category=category,
+        output_dir=output_dir
+    )
+    
+    if not success:
+        console.print(f"[bold red]Error:[/bold red] {message}")
+        return 1
+        
+    # Create a table to display statistics
+    table = Table(title=f"Statistics for '{title}'", show_header=True, header_style="bold cyan")
+    table.add_column("Metric")
+    table.add_column("Count", justify="right")
+    
+    # Add rows for each statistic
+    table.add_row("Word count", str(stats["word_count"]))
+    table.add_row("Character count", str(stats["character_count"]))
+    table.add_row("Character count (no spaces)", str(stats["character_count_no_spaces"]))
+    table.add_row("Line count", str(stats["line_count"]))
+    table.add_row("Paragraph count", str(stats["paragraph_count"]))
+    table.add_row("Avg words per paragraph", f"{stats['avg_words_per_paragraph']:.1f}")
+    
+    # Display the table
+    console.print(table)
+    
+    return 0
+
+
 def register_archive_commands(cli_group):
     """Register archive commands with the main CLI group."""
     cli_group.add_command(archive_commands)

@@ -107,3 +107,35 @@ class Note:
             "metadata": self.metadata,
             "filename": self.filename,
         }
+    
+    def get_word_count(self) -> int:
+        """
+        Count the number of words in the note's content.
+        
+        Returns:
+            The number of words in the note's content.
+        """
+        # Split the content by whitespace and count the words
+        # This is a simple approach that works for most cases
+        return len(self.content.split())
+        
+    def get_statistics(self) -> Dict[str, int]:
+        """
+        Get various statistics about the note content.
+        
+        Returns:
+            A dictionary with statistics (word count, character count, etc.)
+        """
+        content = self.content
+        return {
+            "word_count": len(content.split()),
+            "character_count": len(content),
+            "character_count_no_spaces": len(content.replace(" ", "")),
+            "line_count": len(content.splitlines()),
+            "paragraph_count": len([p for p in content.split("\n\n") if p.strip()]),
+            "avg_words_per_paragraph": (
+                len(content.split()) / 
+                len([p for p in content.split("\n\n") if p.strip()])
+                if [p for p in content.split("\n\n") if p.strip()] else 0
+            )
+        }
