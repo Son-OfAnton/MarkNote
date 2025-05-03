@@ -1730,3 +1730,61 @@ class NoteManager:
         stats = note.get_statistics()
         
         return True, f"Statistics for note '{title}'", stats
+    
+    def get_most_frequent_tags(self, 
+                           category: Optional[str] = None,
+                           output_dir: Optional[str] = None,
+                           limit: int = 1) -> List[Tuple[str, int]]:
+        """
+        Get the most frequently used tags across all notes.
+        
+        Args:
+            category: Optional category to filter notes by.
+            output_dir: Optional specific directory to look for notes.
+            limit: Number of top tags to return (default: 1 for just the most frequent)
+            
+        Returns:
+            A list of tuples (tag, count) sorted by frequency (most frequent first).
+            If no tags are found, returns an empty list.
+        """
+        # Get all notes
+        notes = self.list_notes(
+            category=category,
+            output_dir=output_dir
+        )
+        
+        # Count occurrences of each tag
+        tag_counts = {}
+        for note in notes:
+            for tag in note.tags:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        
+        # Sort by count (descending)
+        sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
+        
+        # Return top N tags
+        return sorted_tags[:limit]
+
+    def get_notes_per_category(self, output_dir: Optional[str] = None) -> Dict[str, int]:
+        """
+        Get the number of notes in each category.
+        
+        Args:
+            output_dir: Optional specific directory to look for notes.
+                        This overrides the notes_dir for this specific count.
+                        
+        Returns:
+            A dictionary mapping category names to note counts. 
+            Notes without a category are counted under the key "(uncategorized)".
+        """
+        # Get all notes
+        all_notes = self.list_notes(output_dir=output_dir)
+        
+        # Count notes by category
+        category_counts = {}
+        
+        for note in all_notes:
+            category = note.category if note.category else "(uncategorized)"
+            category_counts[category] = category_counts.get(category, 0) + 1
+            
+        return category_counts
