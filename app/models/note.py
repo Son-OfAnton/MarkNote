@@ -139,3 +139,12 @@ class Note:
                 if [p for p in content.split("\n\n") if p.strip()] else 0
             )
         }
+
+    def get_tags(self) -> List[str]:
+        """
+        Get the tags associated with this note.
+        
+        Returns:
+            List of tags.
+        """
+        return self.tags

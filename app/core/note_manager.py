@@ -1788,3 +1788,76 @@ class NoteManager:
             category_counts[category] = category_counts.get(category, 0) + 1
             
         return category_counts
+    
+    def delete_note(self, title: str, category: Optional[str] = None,
+                   output_dir: Optional[str] = None, 
+                   force: bool = False) -> Tuple[bool, str]:
+        """
+        Delete a note.
+
+        Args:
+            title: The title of the note to delete.
+            category: Optional category to help find the note.
+            output_dir: Optional specific directory to look for the note.
+            force: If True, don't ask for confirmation.
+
+        Returns:
+            A tuple of (success, message).
+        """
+        # Find the note
+        note_path = self.find_note_path(title, category, output_dir)
+        if not note_path:
+            return False, f"Note '{title}' not found."
+
+        try:
+            # Create version before deleting if version control is enabled
+            if self.version_control_enabled:
+                try:
+                    metadata, content = read_note_file(note_path)
+                    note_id = self.version_manager.generate_note_id(note_path, title)
+                    full_content = self._get_full_note_content(metadata, content)
+                    self.version_manager.save_version(
+                        note_id,
+                        full_content,
+                        title,
+                        None,
+                        f"Version created before deletion of: {title}"
+                    )
+                except Exception as e:
+                    # Continue with deletion even if version creation fails
+                    pass
+
+            # Delete the file
+            os.remove(note_path)
+            return True, f"Note '{title}' was deleted successfully."
+
+        except Exception as e:
+            return False, f"Error deleting note '{title}': {str(e)}"
+
+    def bulk_delete_notes(self, titles: List[str], category: Optional[str] = None,
+                         output_dir: Optional[str] = None,
+                         force: bool = False) -> Dict[str, str]:
+        """
+        Delete multiple notes at once.
+
+        Args:
+            titles: List of titles of notes to delete.
+            category: Optional category to help find the notes.
+            output_dir: Optional specific directory to look for the notes.
+            force: If True, don't ask for confirmation for each note.
+
+        Returns:
+            A dictionary with note titles as keys and status messages as values.
+        """
+        results = {}
+        
+        for title in titles:
+            success, message = self.delete_note(
+                title, 
+                category=category, 
+                output_dir=output_dir,
+                force=force
+            )
+            results[title] = f"{'✓' if success else '✗'} {message}"
+        
+        return results

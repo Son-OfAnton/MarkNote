@@ -3524,6 +3524,7 @@ def categories(tag: Optional[str] = None,
 
         console.print(table)
 
+
 @cli.command()
 @click.argument("title")
 @click.option("--category", "-c", help="Category of the note.")
@@ -3538,27 +3539,184 @@ def wordcount(title: str, category: Optional[str] = None, output_dir: Optional[s
         category=category,
         output_dir=output_dir
     )
-    
+
     if not success:
         console.print(f"[bold red]Error:[/bold red] {message}")
         return 1
-        
+
     # Create a table to display statistics
-    table = Table(title=f"Statistics for '{title}'", show_header=True, header_style="bold cyan")
+    table = Table(
+        title=f"Statistics for '{title}'", show_header=True, header_style="bold cyan")
     table.add_column("Metric")
     table.add_column("Count", justify="right")
-    
+
     # Add rows for each statistic
     table.add_row("Word count", str(stats["word_count"]))
     table.add_row("Character count", str(stats["character_count"]))
-    table.add_row("Character count (no spaces)", str(stats["character_count_no_spaces"]))
+    table.add_row("Character count (no spaces)", str(
+        stats["character_count_no_spaces"]))
     table.add_row("Line count", str(stats["line_count"]))
     table.add_row("Paragraph count", str(stats["paragraph_count"]))
-    table.add_row("Avg words per paragraph", f"{stats['avg_words_per_paragraph']:.1f}")
-    
+    table.add_row("Avg words per paragraph",
+                  f"{stats['avg_words_per_paragraph']:.1f}")
+
     # Display the table
     console.print(table)
-    
+
+    return 0
+
+
+@cli.command()
+@click.argument("title")
+@click.option("--category", "-c", help="Category of the note.")
+@click.option("--output-dir", "-o", help="Directory where the note is located.")
+@click.option("--force", "-f", is_flag=True, help="Delete without confirmation.")
+def delete(title: str, category: Optional[str], output_dir: Optional[str], force: bool):
+    """Delete a note."""
+    try:
+        note_manager = NoteManager()
+
+        if not force:
+            if not click.confirm(f"Are you sure you want to delete note '{title}'?"):
+                console.print("[yellow]Deletion cancelled.[/yellow]")
+                return 0
+
+        success, message = note_manager.delete_note(
+            title,
+            category=category,
+            output_dir=output_dir,
+            force=force
+        )
+
+        if success:
+            console.print(f"[green]{message}[/green]")
+        else:
+            console.print(f"[bold red]Error:[/bold red] {message}")
+            return 1
+
+    except Exception as e:
+        console.print(f"[bold red]Error deleting note:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+    return 0
+
+
+@click.group(name="bulk-delete")
+def delete_commands():
+    """Commands for bulk deleting notes."""
+    pass
+
+
+@delete_commands.command(name="titles")
+@click.argument("titles", nargs=-1, required=True)
+@click.option("--category", "-c", help="Category of the notes.")
+@click.option("--output-dir", "-o", help="Directory where the notes are located.")
+@click.option("--force", "-f", is_flag=True, help="Delete without confirmation for each note.")
+def bulk_delete_by_titles(titles: List[str], category: Optional[str],
+                          output_dir: Optional[str], force: bool):
+    """Delete multiple notes by their titles."""
+    try:
+        note_manager = NoteManager()
+
+        # Convert tuple to list
+        titles_list = list(titles)
+
+        if not force:
+            console.print(f"You are about to delete {len(titles_list)} notes:")
+            for title in titles_list:
+                console.print(f"  - {title}")
+            if not click.confirm("Are you sure you want to proceed?"):
+                console.print("[yellow]Bulk deletion cancelled.[/yellow]")
+                return 0
+
+        results = note_manager.bulk_delete_notes(
+            titles_list,
+            category=category,
+            output_dir=output_dir,
+            force=force
+        )
+
+        console.print("[bold]Bulk delete results:[/bold]")
+        for title, result in results.items():
+            if result.startswith("✓"):
+                console.print(f"[green]{result}[/green]")
+            else:
+                console.print(f"[red]{result}[/red]")
+
+    except Exception as e:
+        console.print(f"[bold red]Error in bulk delete:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+    return 0
+
+
+@delete_commands.command(name="tags")
+@click.argument("tags", nargs=-1, required=True)
+@click.option("--category", "-c", help="Category of the notes.")
+@click.option("--output-dir", "-o", help="Directory where the notes are located.")
+@click.option("--force", "-f", is_flag=True, help="Delete without confirmation.")
+@click.option("--all-tags", "-a", is_flag=True, help="Notes must have all tags (AND logic) instead of any tag (OR logic).")
+def bulk_delete_by_tags(tags: List[str], category: Optional[str],
+                        output_dir: Optional[str], force: bool, all_tags: bool):
+    """Delete multiple notes by their tags."""
+    try:
+        note_manager = NoteManager()
+
+        # First, find all notes with the specified tags
+        matched_notes = []
+        all_notes = note_manager.list_notes(
+            category=category, output_dir=output_dir)
+
+        for note in all_notes:
+            note_tags = note.get_tags()
+            if all_tags:
+                # AND logic - note must have all specified tags
+                if all(tag in note_tags for tag in tags):
+                    matched_notes.append(note.title)
+            else:
+                # OR logic - note must have any of the specified tags
+                if any(tag in note_tags for tag in tags):
+                    matched_notes.append(note.title)
+
+        if not matched_notes:
+            console.print(
+                f"[yellow]No notes found with the specified tags: {', '.join(tags)}[/yellow]")
+            return 0
+
+        if not force:
+            console.print(
+                f"You are about to delete {len(matched_notes)} notes with tag(s): {', '.join(tags)}")
+            for title in matched_notes:
+                console.print(f"  - {title}")
+            if not click.confirm("Are you sure you want to proceed?"):
+                console.print("[yellow]Bulk deletion cancelled.[/yellow]")
+                return 0
+
+        results = note_manager.bulk_delete_notes(
+            matched_notes,
+            category=category,
+            output_dir=output_dir,
+            force=force
+        )
+
+        console.print("[bold]Bulk delete results:[/bold]")
+        for title, result in results.items():
+            if result.startswith("✓"):
+                console.print(f"[green]{result}[/green]")
+            else:
+                console.print(f"[red]{result}[/red]")
+
+    except Exception as e:
+        console.print(
+            f"[bold red]Error in bulk delete by tags:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
     return 0
 
 
@@ -3577,6 +3735,8 @@ def register_version_commands(cli_group):
     """Register version commands with the main CLI group."""
     cli_group.add_command(versions)
 
+def register_delete_commands(cli_group):
+    cli_group.add_command(delete_commands)
 
 if __name__ == "__main__":
     cli()
