@@ -1861,3 +1861,100 @@ class NoteManager:
             results[title] = f"{'✓' if success else '✗'} {message}"
         
         return results
+    
+
+    def bulk_rename_tag(self, old_tag: str, new_tag: str, 
+                       filter_tags: Optional[List[str]] = None,
+                       all_filter_tags: bool = False,
+                       category: Optional[str] = None,
+                       output_dir: Optional[str] = None) -> Dict[str, str]:
+        """
+        Rename a tag across multiple notes that have a specific filter tag or tags.
+        
+        Args:
+            old_tag: The tag to be renamed.
+            new_tag: The new name for the tag.
+            filter_tags: Optional list of tags to filter notes by. Only notes with 
+                         these tags will have their old_tag renamed to new_tag.
+            all_filter_tags: If True, notes must have all filter_tags to be affected (AND logic).
+                             If False, notes with any of the filter_tags will be affected (OR logic).
+            category: Optional category to filter notes by.
+            output_dir: Optional specific directory to look for notes.
+            
+        Returns:
+            A dictionary with note titles as keys and status messages as values.
+        """
+        results = {}
+        
+        # Get all notes
+        all_notes = self.list_notes(category=category, output_dir=output_dir)
+        
+        # Filter notes by tags if filter_tags is provided
+        filtered_notes = []
+        
+        if filter_tags:
+            for note in all_notes:
+                note_tags = note.get_tags()
+                
+                if all_filter_tags:
+                    # AND logic - note must have all filter tags
+                    if all(tag in note_tags for tag in filter_tags):
+                        filtered_notes.append(note)
+                else:
+                    # OR logic - note must have any of the filter tags
+                    if any(tag in note_tags for tag in filter_tags):
+                        filtered_notes.append(note)
+        else:
+            # If no filter tags provided, process all notes that have the old_tag
+            filtered_notes = [note for note in all_notes if old_tag in note.get_tags()]
+        
+        # Now process each filtered note
+        for note in filtered_notes:
+            try:
+                # Get the current note path
+                note_path = self.find_note_path(note.title, note.category, output_dir)
+                
+                if not note_path:
+                    results[note.title] = f"✗ Could not find note file"
+                    continue
+                
+                # Skip notes that don't have the old tag
+                if old_tag not in note.get_tags():
+                    results[note.title] = f"✗ Note does not have the tag '{old_tag}'"
+                    continue
+                
+                # Read current content and metadata
+                metadata, content = read_note_file(note_path)
+                
+                # Store original tags for version history message
+                original_tags = metadata.get('tags', [])
+                
+                # Update the tags by replacing old_tag with new_tag
+                updated_tags = [new_tag if t == old_tag else t for t in original_tags]
+                metadata['tags'] = updated_tags
+                
+                # Create a version before updating if version control is enabled
+                if self.version_control_enabled:
+                    try:
+                        note_id = self.version_manager.generate_note_id(note_path, note.title)
+                        full_content = self._get_full_note_content(metadata, content)  # Use original metadata for version
+                        self.version_manager.save_version(
+                            note_id,
+                            full_content,
+                            note.title,
+                            None, 
+                            f"Version created before renaming tag from '{old_tag}' to '{new_tag}'"
+                        )
+                    except Exception as e:
+                        # Continue with tag renaming even if version creation fails
+                        pass
+                
+                # Write the updated note back to file
+                write_note_file(note_path, metadata, content)
+                
+                results[note.title] = f"✓ Tag '{old_tag}' renamed to '{new_tag}'"
+                
+            except Exception as e:
+                results[note.title] = f"✗ Error: {str(e)}"
+        
+        return results

@@ -3720,6 +3720,134 @@ def bulk_delete_by_tags(tags: List[str], category: Optional[str],
     return 0
 
 
+@cli.group(name="tags")
+def tag_commands():
+    """Commands for managing note tags."""
+    pass
+
+@tag_commands.command(name="rename")
+@click.argument("old_tag", required=True)
+@click.argument("new_tag", required=True)
+@click.option("--filter-tags", "-f", multiple=True, help="Only rename tags in notes that have these tags.")
+@click.option("--all-filter-tags/--any-filter-tags", "-a/-n", default=False, 
+                help="Require notes to have all filter tags (AND logic) instead of any (OR logic).")
+@click.option("--category", "-c", help="Only rename tags in notes from this category.")
+@click.option("--output-dir", "-o", help="Directory where the notes are located.")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
+def bulk_rename_tag(old_tag: str, new_tag: str, filter_tags: List[str], all_filter_tags: bool, 
+                    category: Optional[str], output_dir: Optional[str], yes: bool):
+    """
+    Rename a tag across multiple notes.
+    
+    Examples:
+        rename "todo" "to-do"          # Rename all "todo" tags to "to-do"
+        rename "priority" "urgent" -f "project" -f "deadline"  # Only in notes with "project" OR "deadline" tags
+        rename "tech" "technology" -f "blog" -a -f "draft"     # Only in notes with "blog" AND "draft" tags
+    """
+    try:
+        note_manager = NoteManager()
+        
+        # Show what will be done and confirm
+        message = f"Renaming tag '{old_tag}' to '{new_tag}'"
+        if filter_tags:
+            logic_type = "ALL" if all_filter_tags else "ANY"
+            message += f" in notes with {logic_type} of these tags: {', '.join(filter_tags)}"
+        if category:
+            message += f" in category '{category}'"
+            
+        console.print(f"[bold]{message}[/bold]")
+        
+        if not yes:
+            if not click.confirm("Do you want to continue?"):
+                console.print("[yellow]Operation cancelled.[/yellow]")
+                return 0
+        
+        results = note_manager.bulk_rename_tag(
+            old_tag, 
+            new_tag,
+            filter_tags=list(filter_tags) if filter_tags else None,
+            all_filter_tags=all_filter_tags,
+            category=category,
+            output_dir=output_dir
+        )
+        
+        # Display results
+        success_count = sum(1 for msg in results.values() if msg.startswith("✓"))
+        console.print(f"\n[bold]Results: {success_count}/{len(results)} notes updated[/bold]")
+        
+        for note_title, result in results.items():
+            if result.startswith("✓"):
+                console.print(f"[green]{note_title}: {result}[/green]")
+            else:
+                console.print(f"[red]{note_title}: {result}[/red]")
+                
+    except Exception as e:
+        console.print(f"[bold red]Error renaming tags:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+        
+    return 0
+
+@tag_commands.command(name="list")
+@click.option("--count", "-c", is_flag=True, help="Show tag count.")
+@click.option("--sort", "-s", type=click.Choice(["name", "count"]), default="name", 
+                help="Sort by name or count.")
+@click.option("--limit", "-l", type=int, help="Limit number of tags shown.")
+@click.option("--output-dir", "-o", help="Directory where to look for notes.")
+def list_tags(count: bool, sort: str, limit: Optional[int], output_dir: Optional[str]):
+    """
+    List all tags used across notes.
+    """
+    try:
+        note_manager = NoteManager()
+        tag_counts = {}
+        
+        # Get all notes
+        notes = note_manager.list_notes(output_dir=output_dir)
+        
+        # Count tags
+        for note in notes:
+            for tag in note.get_tags():
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+                
+        if not tag_counts:
+            console.print("[yellow]No tags found.[/yellow]")
+            return 0
+            
+        # Sort tags
+        if sort == "name":
+            sorted_tags = sorted(tag_counts.items())
+        else:  # sort == "count"
+            sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
+            
+        # Limit number of tags if requested
+        if limit and limit > 0:
+            sorted_tags = sorted_tags[:limit]
+            
+        # Display tags
+        table = Table(title="Tags")
+        table.add_column("Tag", style="green")
+        if count:
+            table.add_column("Count", style="cyan", justify="right")
+            
+        for tag, count_value in sorted_tags:
+            if count:
+                table.add_row(tag, str(count_value))
+            else:
+                table.add_row(tag)
+                
+        console.print(table)
+        
+    except Exception as e:
+        console.print(f"[bold red]Error listing tags:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+        
+    return 0
+
+
 def register_archive_commands(cli_group):
     """Register archive commands with the main CLI group."""
     cli_group.add_command(archive_commands)
@@ -3737,6 +3865,11 @@ def register_version_commands(cli_group):
 
 def register_delete_commands(cli_group):
     cli_group.add_command(delete_commands)
+
+
+def register_tag_commands(cli_group):
+    """Register tag commands with the main CLI group."""
+    cli_group.add_command(tag_commands)
 
 if __name__ == "__main__":
     cli()
