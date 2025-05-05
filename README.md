@@ -11,6 +11,9 @@ A command-line tool for creating, organizing, and managing Markdown-based notes.
 - Preview notes with proper Markdown rendering
 - Manage note metadata (frontmatter)
 - Track note revisions
+- Encrypt and decrypt notes
+- Archive and unarchive notes
+- Analyze note networks and connections
 
 ## Installation
 
@@ -198,6 +201,22 @@ marknote archive auto --days 30 --reason "Old notes" --dry-run
 marknote archive status "Note Title"
 ```
 
+### Additional Commands
+
+```bash
+# Count total notes
+marknote count --tag "work" --category "personal"
+
+# Show most frequent tags
+marknote tags --top 5 --all
+
+# Show notes per category
+marknote categories --sort-by count --reverse
+
+# Display word count for a note
+marknote wordcount "My New Note" --category work
+```
+
 ## Development
 
 ```bash
@@ -227,7 +246,8 @@ MarkNote/
 │   │   ├── daily_note_service.py
 │   │   ├── note_manager.py
 │   │   ├── note_manager_archieve_extension.py
-│   │   └── note_manager_extension.py
+│   │   ├── note_manager_extension.py
+│   │   └── note_manager_version_control.py
 │   ├── models/
 │   │   └── note.py
 │   ├── templates/
