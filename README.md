@@ -14,6 +14,9 @@ A command-line tool for creating, organizing, and managing Markdown-based notes.
 - Encrypt and decrypt notes
 - Archive and unarchive notes
 - Analyze note networks and connections
+- Bulk delete notes
+- Manage note templates
+- Rename tags across multiple notes
 
 ## Installation
 
@@ -68,16 +71,49 @@ marknote edit "My New Note" --category work --output-dir ~/notes --editor vim
 marknote show "My New Note" --category work --output-dir ~/notes
 ```
 
-### List Templates
+### Delete Notes
 
 ```bash
-marknote templates
+# Delete a single note
+marknote delete "My New Note" --category work --output-dir ~/notes --force
+
+# Bulk delete notes by titles
+marknote bulk-delete titles "Note1" "Note2" --category work --output-dir ~/notes --force
+
+# Bulk delete notes by tags
+marknote bulk-delete tags "urgent" "work" --category work --output-dir ~/notes --force --all-tags
 ```
 
-### List Available Editors
+### Tag Commands
 
 ```bash
-marknote editors
+# Rename a tag across multiple notes
+marknote tags rename "old_tag" "new_tag" --filter-tags "filter1" --all-filter-tags --category work --output-dir ~/notes --yes
+
+# List all tags
+marknote tags list --count --sort count --limit 10 --output-dir ~/notes
+```
+
+### Template Management
+
+```bash
+# Create a new template
+marknote templates-manage create "new_template" --from "default" --editor nano --yes
+
+# Edit an existing template
+marknote templates-manage edit "default" --editor vim
+
+# Show a template
+marknote templates-manage show "default" --raw
+
+# Delete a template
+marknote templates-manage delete "old_template" --yes
+
+# Copy a template
+marknote templates-manage copy "source_template" "destination_template" --yes
+
+# List all templates
+marknote templates-manage list --details
 ```
 
 ### Link Commands
@@ -255,7 +291,9 @@ MarkNote/
 │   │   │   └── template.md
 │   │   ├── journal/
 │   │   │   └── template.md
-│   │   └── meeting/
+│   │   ├── meeting/
+│   │   │   └── template.md
+│   │   └── custom/
 │   │       └── template.md
 │   └── utils/
 │       ├── editor_handler.py
