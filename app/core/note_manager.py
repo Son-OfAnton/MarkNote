@@ -2,6 +2,7 @@
 Core note management functionality for MarkNote.
 """
 from collections import Counter
+import copy
 import os
 from typing import List, Optional, Dict, Any, Set, Tuple
 from datetime import date as dt, datetime
