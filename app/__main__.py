@@ -7,7 +7,7 @@ import sys
 import click
 from rich.console import Console
 
-from app.cli.commands import cli, register_archive_commands, register_delete_commands, register_encryption_commands, register_link_commands, register_tag_commands, register_template_commands, register_version_commands
+from app.cli.commands import cli, register_archive_commands, register_delete_commands, register_encryption_commands, register_link_commands, register_merge_commands, register_tag_commands, register_template_commands, register_version_commands
 
 
 def main():
@@ -28,6 +28,8 @@ def main():
     register_tag_commands(cli)
 
     register_template_commands(cli)
+
+    register_merge_commands(cli)
 
     # Run the CLI
     return cli()

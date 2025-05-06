@@ -4302,6 +4302,121 @@ def auto_archive_by_date(date: str, field: str, before: bool, reason: str, move:
         import traceback
         traceback.print_exc()
         return 1
+    
+def register_merge_commands(cli_group):
+    """Register note merge commands to the CLI group."""
+    
+    @cli_group.command(name="merge")
+    @click.argument("source_note_title", type=str)
+    @click.argument("target_note_title", type=str)
+    @click.option("--new-title", "-n", type=str, required=False, help="Title for the merged note. Default is target note title.")
+    @click.option("--source-category", "-sc", type=str, required=False, help="Category of the source note.")
+    @click.option("--target-category", "-tc", type=str, required=False, help="Category of the target note.")
+    @click.option("--output-dir", "-o", type=str, required=False, help="Directory to look for the notes.")
+    @click.option("--no-merge-metadata", is_flag=True, help="Do not merge metadata (tags, links, etc.).")
+    @click.option("--separator", "-s", type=str, default="\n\n---\n\n", help="Content separator between the merged notes.")
+    @click.option("--keep-originals", "-k", is_flag=True, help="Keep original notes after merging.")
+    @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt.")
+    @click.option("--show", is_flag=True, help="Show the merged note after creation.")
+    def merge_notes(source_note_title, target_note_title, new_title, source_category, target_category,
+                   output_dir, no_merge_metadata, separator, keep_originals, force, show):
+        """
+        Merge two notes into one.
+        
+        This command combines the content and optionally the metadata of two notes.
+        By default, the merged note will have the title of the target note unless 
+        a new title is specified. The original notes are deleted by default unless 
+        the --keep-originals flag is used.
+        
+        Example usage:
+        
+        \b
+        # Basic merge
+        marknote merge "Note1" "Note2"
+        
+        \b
+        # Merge with a new title
+        marknote merge "Note1" "Note2" --new-title "Combined Note"
+        
+        \b
+        # Keep the original notes
+        marknote merge "Note1" "Note2" --keep-originals
+        
+        \b
+        # Don't merge metadata (tags, links, etc.)
+        marknote merge "Note1" "Note2" --no-merge-metadata
+        """
+        console = Console()
+        from app.core.note_manager import NoteManager
+        
+        # Initialize the NoteManager
+        note_manager = NoteManager(output_dir)
+        
+        # Check if both notes exist
+        source_note = note_manager.get_note(source_note_title, source_category, output_dir)
+        target_note = note_manager.get_note(target_note_title, target_category, output_dir)
+        
+        if not source_note:
+            console.print(f"[bold red]Error:[/] Source note '{source_note_title}' not found.")
+            return 1
+        
+        if not target_note:
+            console.print(f"[bold red]Error:[/] Target note '{target_note_title}' not found.")
+            return 1
+            
+        # Display information about what will happen
+        final_title = new_title if new_title else target_note_title
+        console.print(f"[bold]Merge Operation:[/]")
+        console.print(f"  Source Note: [cyan]{source_note_title}[/]")
+        console.print(f"  Target Note: [cyan]{target_note_title}[/]")
+        console.print(f"  Merged Title: [green]{final_title}[/]")
+        console.print(f"  Keep Originals: [{'green' if keep_originals else 'red'}]{keep_originals}[/]")
+        console.print(f"  Merge Metadata: [{'green' if not no_merge_metadata else 'red'}]{not no_merge_metadata}[/]")
+        
+        # Confirmation prompt
+        if not force:
+            if final_title != target_note_title and final_title != source_note_title and not keep_originals:
+                console.print("\n[yellow]Warning:[/] Both original notes will be deleted after merging.")
+                
+            proceed = click.confirm("Do you want to continue with the merge?", default=True)
+            if not proceed:
+                console.print("Merge operation cancelled.")
+                return 0
+        
+        # Perform the merge
+        success, message, merged_note = note_manager.merge_notes(
+            source_note_title=source_note_title,
+            target_note_title=target_note_title,
+            new_title=new_title,
+            source_category=source_category,
+            target_category=target_category,
+            output_dir=output_dir,
+            merge_metadata=not no_merge_metadata,
+            content_separator=separator,
+            keep_original_notes=keep_originals
+        )
+        
+        if success:
+            console.print(f"[bold green]Success:[/] {message}")
+            
+            # Show the merged note if requested
+            if show and merged_note:
+                console.print("\n[bold]Merged Note Content:[/]")
+                console.print(Panel(
+                    Markdown(merged_note.content),
+                    title=merged_note.title,
+                    expand=False
+                ))
+                
+                if not no_merge_metadata:
+                    console.print("\n[bold]Merged Metadata:[/]")
+                    console.print(f"  Tags: {', '.join(merged_note.tags) if merged_note.tags else 'None'}")
+                    console.print(f"  Links: {', '.join(merged_note.get_links()) if merged_note.get_links() else 'None'}")
+            
+            return 0
+        else:
+            console.print(f"[bold red]Error:[/] {message}")
+            return 1
 
 
 def register_archive_commands(cli_group):

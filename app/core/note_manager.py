@@ -1959,3 +1959,140 @@ class NoteManager:
         
         return results
     
+    def merge_notes(self, source_note_title: str, target_note_title: str, 
+                new_title: Optional[str] = None,
+                source_category: Optional[str] = None, 
+                target_category: Optional[str] = None,
+                output_dir: Optional[str] = None,
+                merge_metadata: bool = True,
+                content_separator: str = "\n\n---\n\n",
+                keep_original_notes: bool = False) -> Tuple[bool, str, Optional[Note]]:
+        """
+        Merge two notes into a new or existing note.
+        
+        Args:
+            source_note_title: Title of the first note to merge.
+            target_note_title: Title of the second note to merge.
+            new_title: Optional title for the merged note. If None, defaults to target_note_title.
+            source_category: Optional category for the source note.
+            target_category: Optional category for the target note.
+            output_dir: Optional specific directory to look for notes.
+            merge_metadata: Whether to merge metadata like tags, links, etc.
+            content_separator: String to separate the content of the two notes in the merged note.
+            keep_original_notes: If True, keep original notes after merge, otherwise delete them.
+        
+        Returns:
+            A tuple of (success, message, merged_note).
+        """
+        # Find the source note
+        source_note = self.get_note(source_note_title, source_category, output_dir)
+        if not source_note:
+            return False, f"Source note '{source_note_title}' not found.", None
+            
+        # Find the target note
+        target_note = self.get_note(target_note_title, target_category, output_dir)
+        if not target_note:
+            return False, f"Target note '{target_note_title}' not found.", None
+        
+        # Self-merge check
+        if source_note_title == target_note_title and source_category == target_category:
+            return False, "Cannot merge a note with itself.", None
+            
+        # Determine the new title and time values
+        merged_title = new_title if new_title else target_note_title
+        current_time = datetime.now()
+        
+        # Create a new content combining both notes
+        # Format: [Source Note Title] content + separator + [Target Note Title] content
+        merged_content = f"# From {source_note.title}\n\n{source_note.content}"
+        merged_content += content_separator
+        merged_content += f"# From {target_note.title}\n\n{target_note.content}"
+        
+        # Initialize merged metadata
+        merged_tags: List[str] = []
+        merged_links: Set[str] = set()
+        merged_metadata: Dict[str, Any] = {}
+        
+        # Merge tags if specified
+        if merge_metadata:
+            # Combine tags from both notes (deduplication is handled since we're creating a set)
+            merged_tags = list(set(source_note.get_tags() + target_note.get_tags()))
+            
+            # Combine linked notes (deduplication is handled by the set)
+            merged_links = source_note.get_links() | target_note.get_links()
+            
+            # Remove self-references from linked notes
+            if merged_title in merged_links:
+                merged_links.remove(merged_title)
+            
+            # Combine metadata dictionaries (target note's values take precedence for duplicate keys)
+            merged_metadata = {**source_note.metadata, **target_note.metadata}
+            merged_metadata["merged_from"] = [source_note.title, target_note.title]
+            merged_metadata["merged_at"] = current_time.isoformat()
+        
+        # Create the merged note or update the target note
+        try:
+            # Version control - create versions of both original notes
+            if self.version_control_enabled:
+                self.create_version(source_note.title, source_category, output_dir, 
+                                    message=f"Auto-versioned before merging with '{target_note.title}'")
+                self.create_version(target_note.title, target_category, output_dir, 
+                                    message=f"Auto-versioned before merging with '{source_note.title}'")
+            
+            # If creating a new note (new title is different from both source and target)
+            if merged_title not in [source_note_title, target_note_title]:
+                # Create a new note with the merged content
+                merged_note = self.create_note(
+                    title=merged_title,
+                    content=merged_content,
+                    tags=merged_tags,
+                    category=target_note.category,  # Use target's category by default
+                    additional_metadata=merged_metadata,
+                    output_dir=output_dir
+                )
+                
+                # Add all links to the new note
+                for link in merged_links:
+                    merged_note.add_link(link)
+                    
+                # Update the note to save links
+                self.update_note(merged_note.title, merged_note, merged_note.category, output_dir)
+                
+            # If overwriting the target note
+            else:
+                # Update the target note with the merged content
+                target_note.update_content(merged_content)
+                
+                # Update metadata if requested
+                if merge_metadata:
+                    # Update tags
+                    target_note.tags = merged_tags
+                    
+                    # Update links - first remove all existing links
+                    current_links = target_note.get_links()
+                    for link in current_links:
+                        target_note.remove_link(link)
+                    
+                    # Add all combined links
+                    for link in merged_links:
+                        target_note.add_link(link)
+                    
+                    # Update metadata
+                    target_note.metadata.update(merged_metadata)
+                
+                # Update the note
+                target_note.updated_at = current_time
+                merged_note = target_note
+                self.update_note(target_note.title, target_note, target_note.category, output_dir)
+        
+            # Delete the original notes if requested
+            if not keep_original_notes:
+                if merged_title != source_note_title:  # Don't delete if it's being updated to
+                    self.delete_note(source_note_title, source_category, output_dir)
+                if merged_title != target_note_title:  # Don't delete if it's being updated to
+                    self.delete_note(target_note_title, target_category, output_dir)
+            
+            return True, f"Notes successfully merged into '{merged_note.title}'.", merged_note
+            
+        except Exception as e:
+            return False, f"Error merging notes: {str(e)}", None
