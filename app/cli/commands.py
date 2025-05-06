@@ -4939,6 +4939,582 @@ def register_backup_commands(cli_group):
             click.echo(json.dumps(result, indent=2))
         
         return 0 if success else 1
+    
+def register_cleanup_commands(cli_group):
+    """
+    Register cleanup commands to the CLI.
+    """
+    # Create cleanup command group
+    @cli_group.group(name="cleanup")
+    def cleanup_group():
+        """
+        Clean up empty and duplicate notes.
+        """
+        pass
+    
+    @cleanup_group.command(name="empty")
+    @click.option("--min-length", "-m", type=int, default=10, 
+                 help="Minimum content length (in characters) to consider non-empty.")
+    @click.option("--include-whitespace", "-w", is_flag=True, 
+                 help="Count whitespace-only notes as empty.")
+    @click.option("--delete", "-d", is_flag=True, 
+                 help="Delete the empty notes (otherwise just lists them).")
+    @click.option("--force", "-f", is_flag=True, 
+                 help="Skip confirmation prompt when deleting.")
+    @click.option("--output-dir", "-o", help="Directory to look for notes.")
+    @click.option("--output-format", type=click.Choice(["text", "json"]), default="text",
+                 help="Output format.")
+    def find_empty_notes(min_length, include_whitespace, delete, force, output_dir, output_format):
+        """
+        Find and optionally delete empty or near-empty notes.
+        
+        This command identifies notes with no content or very little content and 
+        provides options to delete them. By default, it only lists the empty notes
+        without deleting them.
+        
+        Examples:
+        
+        \b
+        # Find empty notes (just lists them)
+        marknote cleanup empty
+        
+        \b
+        # Find notes with less than 50 characters of content
+        marknote cleanup empty --min-length 50
+        
+        \b
+        # Delete empty notes (will prompt for confirmation)
+        marknote cleanup empty --delete
+        
+        \b
+        # Delete empty notes without confirmation
+        marknote cleanup empty --delete --force
+        """
+        from app.core.cleanup_manager import CleanupManager
+        from app.core.note_manager import NoteManager
+        
+        console = Console()
+        
+        # Initialize managers
+        note_manager = NoteManager(output_dir)
+        cleanup_manager = CleanupManager(note_manager)
+        
+        # Find empty notes
+        if output_format == "text":
+            with Progress(transient=True) as progress:
+                task = progress.add_task("Finding empty notes...", total=None)
+                empty_notes = cleanup_manager.find_empty_notes(
+                    min_content_length=min_length,
+                    include_whitespace_only=include_whitespace
+                )
+                progress.update(task, completed=True)
+        else:
+            empty_notes = cleanup_manager.find_empty_notes(
+                min_content_length=min_length,
+                include_whitespace_only=include_whitespace
+            )
+        
+        # Display results
+        if output_format == "text":
+            if not empty_notes:
+                console.print("[green]No empty notes found.[/]")
+                return 0
+                
+            # Display empty notes
+            console.print(f"[bold]Found {len(empty_notes)} empty notes (less than {min_length} characters):[/]")
+            
+            # Create a table
+            table = Table()
+            table.add_column("Title", style="cyan")
+            table.add_column("Category", style="green")
+            table.add_column("Size", style="magenta", justify="right")
+            table.add_column("Has Metadata", justify="center")
+            table.add_column("Has Tags", justify="center")
+            table.add_column("Links", justify="right")
+            
+            for note in empty_notes:
+                # Format size
+                size_kb = note.size_bytes / 1024
+                size_str = f"{size_kb:.1f} KB"
+                
+                table.add_row(
+                    note.title,
+                    note.category or "N/A",
+                    size_str,
+                    "✓" if note.has_metadata else "✗",
+                    "✓" if note.has_tags else "✗",
+                    str(note.link_count)
+                )
+            
+            console.print(table)
+            
+            # Handle deletion if requested
+            if delete:
+                if not force:
+                    proceed = click.confirm(f"Delete {len(empty_notes)} empty notes?", default=False)
+                    if not proceed:
+                        console.print("Deletion cancelled.")
+                        return 0
+                
+                # Perform deletion
+                console.print("\nDeleting empty notes...", style="bold")
+                
+                with Progress(transient=True) as progress:
+                    task = progress.add_task("Deleting...", total=None)
+                    count, deleted, errors = cleanup_manager.delete_empty_notes(
+                        empty_notes=empty_notes,
+                        dry_run=False
+                    )
+                    progress.update(task, completed=True)
+                
+                console.print(f"[bold green]Success:[/] Deleted {count} empty notes.")
+                
+                # Display errors if any
+                if errors:
+                    console.print("\n[bold red]Errors during deletion:[/]")
+                    for error in errors:
+                        console.print(f"  - {error}")
+        
+        elif output_format == "json":
+            result = {
+                "empty_notes_count": len(empty_notes),
+                "min_length": min_length,
+                "include_whitespace": include_whitespace,
+                "empty_notes": [
+                    {
+                        "title": note.title,
+                        "category": note.category,
+                        "path": note.path,
+                        "size_bytes": note.size_bytes,
+                        "has_metadata": note.has_metadata,
+                        "has_tags": note.has_tags,
+                        "link_count": note.link_count
+                    }
+                    for note in empty_notes
+                ]
+            }
+            
+            # Add deletion results if applicable
+            if delete:
+                count, deleted, errors = cleanup_manager.delete_empty_notes(
+                    empty_notes=empty_notes,
+                    dry_run=False
+                )
+                
+                result["deleted"] = {
+                    "count": count,
+                    "deleted_titles": deleted,
+                    "errors": errors
+                }
+            
+            click.echo(json.dumps(result, indent=2))
+        
+        return 0
+    
+    @cleanup_group.command(name="duplicates")
+    @click.option("--similarity", "-s", type=float, default=0.9, 
+                 help="Similarity threshold (0.0-1.0) for considering notes as duplicates.")
+    @click.option("--content-only", "-c", is_flag=True, 
+                 help="Compare only note content, not metadata.")
+    @click.option("--case-sensitive", is_flag=True, 
+                 help="Make comparison case-sensitive.")
+    @click.option("--delete", "-d", is_flag=True, 
+                 help="Delete duplicate notes (otherwise just lists them).")
+    @click.option("--keep", "-k", type=click.Choice(["newest", "oldest", "longest", "shortest"]), 
+                 default="newest", help="Which note to keep when deleting duplicates.")
+    @click.option("--show-content", is_flag=True, 
+                 help="Show note content in the results.")
+    @click.option("--force", "-f", is_flag=True, 
+                 help="Skip confirmation prompt when deleting.")
+    @click.option("--output-dir", "-o", help="Directory to look for notes.")
+    @click.option("--output-format", type=click.Choice(["text", "json"]), default="text",
+                 help="Output format.")
+    def find_duplicate_notes(similarity, content_only, case_sensitive, delete, keep, 
+                            show_content, force, output_dir, output_format):
+        """
+        Find and optionally delete duplicate notes.
+        
+        This command identifies notes with identical or similar content and
+        provides options to delete duplicates, keeping one note from each group.
+        By default, it only lists the duplicates without deleting them.
+        
+        Examples:
+        
+        \b
+        # Find duplicate notes (just lists them)
+        marknote cleanup duplicates
+        
+        \b
+        # Find notes with at least 80% similar content
+        marknote cleanup duplicates --similarity 0.8
+        
+        \b
+        # Delete duplicates, keeping the oldest version of each note
+        marknote cleanup duplicates --delete --keep oldest
+        
+        \b
+        # Compare only note content, ignoring metadata
+        marknote cleanup duplicates --content-only
+        
+        \b
+        # Show the content of found duplicates
+        marknote cleanup duplicates --show-content
+        """
+        from app.core.cleanup_manager import CleanupManager
+        from app.core.note_manager import NoteManager
+        
+        console = Console()
+        
+        # Initialize managers
+        note_manager = NoteManager(output_dir)
+        cleanup_manager = CleanupManager(note_manager)
+        
+        # Find duplicate notes
+        if output_format == "text":
+            console.print(f"Finding duplicate notes (similarity threshold: {similarity:.0%})...")
+            
+            with Progress(transient=True) as progress:
+                task = progress.add_task("Searching...", total=None)
+                duplicate_groups = cleanup_manager.find_duplicate_notes(
+                    similarity_threshold=similarity,
+                    compare_content_only=content_only,
+                    ignore_case=not case_sensitive
+                )
+                progress.update(task, completed=True)
+        else:
+            duplicate_groups = cleanup_manager.find_duplicate_notes(
+                similarity_threshold=similarity,
+                compare_content_only=content_only,
+                ignore_case=not case_sensitive
+            )
+        
+        # Display results
+        if output_format == "text":
+            if not duplicate_groups:
+                console.print("[green]No duplicate notes found.[/]")
+                return 0
+                
+            # Count total duplicates
+            total_notes = sum(len(group.notes) for group in duplicate_groups)
+            unique_groups = len(duplicate_groups)
+            duplicate_count = total_notes - unique_groups  # one note per group is not a duplicate
+            
+            console.print(f"[bold]Found {duplicate_count} duplicate notes in {unique_groups} groups:[/]")
+            
+            # Display each group
+            for i, group in enumerate(duplicate_groups, 1):
+                # Sort notes by title for consistent display
+                notes = sorted(group.notes, key=lambda n: n.title)
+                
+                console.print(f"\n[bold cyan]Group {i}[/] ([bold]{len(notes)}[/] notes, "
+                            f"[bold]{group.similarity:.0%}[/] similarity)")
+                
+                # Create a table for this group
+                table = Table()
+                table.add_column("Title", style="cyan")
+                table.add_column("Category", style="green")
+                table.add_column("Last Updated", style="yellow")
+                table.add_column("Created", style="blue")
+                table.add_column("Size", style="magenta", justify="right")
+                
+                # Add a note about which would be kept
+                if keep == "newest":
+                    keep_note = max(notes, key=lambda n: n.updated_at)
+                    keep_message = "newest update date"
+                elif keep == "oldest":
+                    keep_note = min(notes, key=lambda n: n.created_at)
+                    keep_message = "oldest creation date"
+                elif keep == "longest":
+                    keep_note = max(notes, key=lambda n: len(n.content))
+                    keep_message = "longest content"
+                elif keep == "shortest":
+                    keep_note = min(notes, key=lambda n: len(n.content))
+                    keep_message = "shortest content"
+                else:
+                    keep_note = notes[0]  # Fallback
+                    keep_message = "default strategy"
+                
+                for note in notes:
+                    # Format dates
+                    updated = note.updated_at.strftime("%Y-%m-%d %H:%M")
+                    created = note.created_at.strftime("%Y-%m-%d %H:%M")
+                    
+                    # Format content size
+                    size_kb = len(note.content) / 1024
+                    size_str = f"{size_kb:.1f} KB"
+                    
+                    # Mark the note that would be kept
+                    title = note.title
+                    if note.title == keep_note.title and note.category == keep_note.category:
+                        title = f"{title} [green](would keep)[/]"
+                    
+                    table.add_row(
+                        title,
+                        note.category or "N/A",
+                        updated,
+                        created,
+                        size_str
+                    )
+                
+                console.print(table)
+                console.print(f"[italic]Note: Using '{keep}' strategy ({keep_message}), "
+                            f"the note '{keep_note.title}' would be kept.[/]")
+                
+                # Show content if requested
+                if show_content and notes:
+                    # Just show the content of the first note in the group
+                    sample_note = notes[0]
+                    preview_content = sample_note.content[:500] + "..." if len(sample_note.content) > 500 else sample_note.content
+                    
+                    console.print(Panel(
+                        Markdown(preview_content),
+                        title=f"Content Sample ({sample_note.title})",
+                        expand=False
+                    ))
+            
+            # Handle deletion if requested
+            if delete:
+                if not force:
+                    proceed = click.confirm(
+                        f"Delete {duplicate_count} duplicate notes, keeping one note from each group using '{keep}' strategy?", 
+                        default=False
+                    )
+                    if not proceed:
+                        console.print("Deletion cancelled.")
+                        return 0
+                
+                # Perform deletion
+                console.print("\nDeleting duplicate notes...", style="bold")
+                
+                with Progress(transient=True) as progress:
+                    task = progress.add_task("Deleting...", total=None)
+                    count, deleted, errors = cleanup_manager.delete_duplicate_notes(
+                        duplicate_groups=duplicate_groups,
+                        keep_strategy=keep,
+                        dry_run=False
+                    )
+                    progress.update(task, completed=True)
+                
+                console.print(f"[bold green]Success:[/] Deleted {count} duplicate notes, kept {unique_groups} unique notes.")
+                
+                # Display errors if any
+                if errors:
+                    console.print("\n[bold red]Errors during deletion:[/]")
+                    for error in errors:
+                        console.print(f"  - {error}")
+        
+        elif output_format == "json":
+            # Extract information about duplicate groups
+            groups_data = []
+            for i, group in enumerate(duplicate_groups, 1):
+                group_data = {
+                    "group_id": i,
+                    "note_count": len(group.notes),
+                    "similarity": group.similarity,
+                    "notes": [
+                        {
+                            "title": note.title,
+                            "category": note.category,
+                            "updated_at": note.updated_at.isoformat(),
+                            "created_at": note.created_at.isoformat(),
+                            "content_length": len(note.content),
+                            "tags": note.tags
+                        }
+                        for note in group.notes
+                    ]
+                }
+                
+                # Determine which note would be kept
+                notes = group.notes
+                if keep == "newest":
+                    keep_note = max(notes, key=lambda n: n.updated_at)
+                elif keep == "oldest":
+                    keep_note = min(notes, key=lambda n: n.created_at)
+                elif keep == "longest":
+                    keep_note = max(notes, key=lambda n: len(n.content))
+                elif keep == "shortest":
+                    keep_note = min(notes, key=lambda n: len(n.content))
+                else:
+                    keep_note = notes[0]  # Fallback
+                
+                group_data["keep_strategy"] = keep
+                group_data["keep_note"] = {
+                    "title": keep_note.title,
+                    "category": keep_note.category
+                }
+                
+                groups_data.append(group_data)
+            
+            # Build result object
+            result = {
+                "total_groups": len(duplicate_groups),
+                "total_notes": sum(len(group.notes) for group in duplicate_groups),
+                "duplicate_notes": sum(len(group.notes) for group in duplicate_groups) - len(duplicate_groups),
+                "similarity_threshold": similarity,
+                "compare_content_only": content_only,
+                "case_sensitive": case_sensitive,
+                "groups": groups_data
+            }
+            
+            # Add deletion results if applicable
+            if delete:
+                count, deleted, errors = cleanup_manager.delete_duplicate_notes(
+                    duplicate_groups=duplicate_groups,
+                    keep_strategy=keep,
+                    dry_run=False
+                )
+                
+                result["deleted"] = {
+                    "count": count,
+                    "deleted_titles": deleted,
+                    "errors": errors
+                }
+            
+            click.echo(json.dumps(result, indent=2, default=str))
+        
+        return 0
+    
+    @cleanup_group.command(name="scan")
+    @click.option("--output-dir", "-o", help="Directory to look for notes.")
+    @click.option("--min-length", "-m", type=int, default=10, 
+                 help="Minimum content length for empty note detection.")
+    @click.option("--similarity", "-s", type=float, default=0.9, 
+                 help="Similarity threshold for duplicate detection.")
+    @click.option("--dry-run", "-n", is_flag=True, 
+                 help="Only simulate cleaning, don't actually delete notes.")
+    @click.option("--force", "-f", is_flag=True, 
+                 help="Skip confirmation prompt.")
+    def scan_and_clean(output_dir, min_length, similarity, dry_run, force):
+        """
+        Scan for and clean both empty and duplicate notes.
+        
+        This is a convenience command that runs both empty and duplicate
+        detection and provides a summary report. By default, it only
+        reports issues without making changes.
+        
+        Examples:
+        
+        \b
+        # Scan for issues without cleaning
+        marknote cleanup scan
+        
+        \b
+        # Scan and clean with lower thresholds
+        marknote cleanup scan --min-length 5 --similarity 0.8
+        
+        \b
+        # Clean without confirmation (actually deletes notes)
+        marknote cleanup scan --dry-run --force
+        """
+        from app.core.cleanup_manager import CleanupManager
+        from app.core.note_manager import NoteManager
+        
+        console = Console()
+        
+        # Initialize managers
+        note_manager = NoteManager(output_dir)
+        cleanup_manager = CleanupManager(note_manager)
+        
+        console.print("[bold]Scanning notes for issues...[/]")
+        
+        # Find empty notes
+        with Progress(transient=True) as progress:
+            task = progress.add_task("Finding empty notes...", total=None)
+            empty_notes = cleanup_manager.find_empty_notes(
+                min_content_length=min_length,
+                include_whitespace_only=True
+            )
+            progress.update(task, completed=True)
+        
+        # Find duplicate notes
+        with Progress(transient=True) as progress:
+            task = progress.add_task("Finding duplicate notes...", total=None)
+            duplicate_groups = cleanup_manager.find_duplicate_notes(
+                similarity_threshold=similarity
+            )
+            progress.update(task, completed=True)
+        
+        # Count duplicate notes
+        duplicate_count = sum(len(group.notes) - 1 for group in duplicate_groups)
+        
+        # Display summary
+        console.print("\n[bold]Scan Results:[/]")
+        console.print(f"  Empty notes: [cyan]{len(empty_notes)}[/]")
+        console.print(f"  Duplicate notes: [cyan]{duplicate_count}[/] (in {len(duplicate_groups)} groups)")
+        console.print(f"  Total issues: [bold red]{len(empty_notes) + duplicate_count}[/]")
+        
+        # Detail sections
+        if empty_notes:
+            console.print("\n[bold]Empty Notes:[/]")
+            for i, note in enumerate(empty_notes[:5], 1):  # Show only first 5
+                console.print(f"  {i}. [cyan]{note.title}[/] ({note.size_bytes} bytes)")
+            
+            if len(empty_notes) > 5:
+                console.print(f"  ... and {len(empty_notes) - 5} more")
+        
+        if duplicate_groups:
+            console.print("\n[bold]Duplicate Groups:[/]")
+            for i, group in enumerate(duplicate_groups[:3], 1):  # Show only first 3 groups
+                note_titles = [note.title for note in group.notes]
+                console.print(f"  {i}. [cyan]{len(note_titles)}[/] notes with [green]{group.similarity:.0%}[/] similarity")
+                for j, title in enumerate(note_titles[:3], 1):
+                    console.print(f"     {j}. {title}")
+                if len(note_titles) > 3:
+                    console.print(f"     ... and {len(note_titles) - 3} more notes")
+            
+            if len(duplicate_groups) > 3:
+                console.print(f"  ... and {len(duplicate_groups) - 3} more groups")
+        
+        # Offer to clean up
+        if (empty_notes or duplicate_groups) and not dry_run:
+            if not force:
+                cleanup = click.confirm("\nDo you want to clean up these issues?", default=False)
+                if not cleanup:
+                    console.print("Cleanup cancelled.")
+                    return 0
+            
+            console.print("\n[bold]Cleaning up issues...[/]")
+            
+            # Delete empty notes
+            if empty_notes:
+                with Progress(transient=True) as progress:
+                    task = progress.add_task("Deleting empty notes...", total=None)
+                    empty_count, empty_deleted, empty_errors = cleanup_manager.delete_empty_notes(
+                        empty_notes=empty_notes,
+                        dry_run=False
+                    )
+                    progress.update(task, completed=True)
+                
+                console.print(f"[green]Deleted {empty_count} empty notes.[/]")
+            
+            # Delete duplicate notes
+            if duplicate_groups:
+                with Progress(transient=True) as progress:
+                    task = progress.add_task("Deleting duplicate notes...", total=None)
+                    dup_count, dup_deleted, dup_errors = cleanup_manager.delete_duplicate_notes(
+                        duplicate_groups=duplicate_groups,
+                        keep_strategy="newest",
+                        dry_run=False
+                    )
+                    progress.update(task, completed=True)
+                
+                console.print(f"[green]Deleted {dup_count} duplicate notes.[/]")
+            
+            # Show any errors
+            all_errors = (empty_errors if empty_notes else []) + (dup_errors if duplicate_groups else [])
+            if all_errors:
+                console.print("\n[bold red]Errors during cleanup:[/]")
+                for error in all_errors[:10]:  # Show max 10 errors
+                    console.print(f"  - {error}")
+                
+                if len(all_errors) > 10:
+                    console.print(f"  ... and {len(all_errors) - 10} more errors")
+        
+        elif dry_run and (empty_notes or duplicate_groups):
+            console.print("\n[yellow]Note:[/] This was a dry run. No notes were actually deleted.")
+            console.print("To perform the actual cleanup, run the command without --dry-run option.")
+        
+        return 0
 
 def register_archive_commands(cli_group):
     """Register archive commands with the main CLI group."""
