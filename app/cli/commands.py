@@ -4419,6 +4419,527 @@ def register_merge_commands(cli_group):
             return 1
 
 
+def register_backup_commands(cli_group):
+    """
+    Register backup and restore commands to the CLI.
+    """
+    # Create backup command group
+    @cli_group.group(name="backup")
+    def backup_group():
+        """
+        Backup and restore your notes.
+        """
+        pass
+    
+    @backup_group.command(name="create")
+    @click.option("--name", "-n", help="Optional name for the backup file (will be suffixed with .zip if needed).")
+    @click.option("--category", "-c", help="Only backup notes in this category.")
+    @click.option("--tags", "-t", multiple=True, help="Only backup notes with these tags (can be used multiple times).")
+    @click.option("--no-versions", is_flag=True, help="Don't include version history in the backup.")
+    @click.option("--include-archived", is_flag=True, help="Include archived notes in the backup.")
+    @click.option("--backup-dir", "-d", help="Custom directory to store the backup file.")
+    @click.option("--output-format", "-f", type=click.Choice(["text", "json"]), default="text", help="Output format.")
+    def create_backup(name, category, tags, no_versions, include_archived, backup_dir, output_format):
+        """
+        Create a backup of your notes.
+        
+        This command creates a zip archive containing your notes, optionally
+        filtered by category or tags. By default, version history is included
+        but archived notes are not.
+        
+        Examples:
+        
+        \b
+        # Create a backup of all notes
+        marknote backup create
+        
+        \b
+        # Create a backup with a custom name
+        marknote backup create --name my_project_backup
+        
+        \b
+        # Backup only notes with specific tags
+        marknote backup create --tags work --tags important
+        
+        \b
+        # Backup only notes in a specific category without version history
+        marknote backup create --category projects --no-versions
+        """
+        from app.core.backup_manager import BackupManager
+        from app.core.note_manager import NoteManager
+        
+        console = Console()
+        
+        # Initialize managers
+        note_manager = NoteManager()
+        backup_manager = BackupManager(notes_dir=note_manager.notes_dir, backup_dir=backup_dir)
+        
+        # Create user metadata
+        metadata = {
+            "created_by_command": "marknote backup create",
+            "command_options": {
+                "name": name,
+                "category": category,
+                "tags": list(tags) if tags else None,
+                "no_versions": no_versions,
+                "include_archived": include_archived,
+                "backup_dir": backup_dir
+            }
+        }
+        
+        # Show what we're going to do
+        if output_format == "text":
+            console.print("[bold]Creating backup with the following settings:[/]")
+            console.print(f"  Notes Directory: [cyan]{note_manager.notes_dir}[/]")
+            console.print(f"  Backup Directory: [cyan]{backup_manager.backup_dir}[/]")
+            if name:
+                console.print(f"  Backup Name: [cyan]{name}[/]")
+            if category:
+                console.print(f"  Filtering by Category: [cyan]{category}[/]")
+            if tags:
+                console.print(f"  Filtering by Tags: [cyan]{', '.join(tags)}[/]")
+            console.print(f"  Including Version History: [cyan]{'No' if no_versions else 'Yes'}[/]")
+            console.print(f"  Including Archived Notes: [cyan]{'Yes' if include_archived else 'No'}[/]")
+            
+            console.print("\nCreating backup...", style="bold")
+        
+        # Create the backup with progress display
+        with Progress(transient=True) as progress:
+            if output_format == "text":
+                task = progress.add_task("Creating backup...", total=None)
+            
+            # Perform backup operation
+            success, message, backup_path = backup_manager.create_backup(
+                backup_name=name,
+                category=category,
+                tags=list(tags) if tags else None,
+                include_versions=not no_versions,
+                include_archived=include_archived,
+                metadata=metadata
+            )
+            
+            if output_format == "text":
+                progress.update(task, completed=True)
+        
+        # Display results
+        if output_format == "text":
+            if success:
+                console.print(f"[bold green]Success:[/] {message}")
+                if backup_path:
+                    size_mb = os.path.getsize(backup_path) / (1024 * 1024)
+                    console.print(f"Backup size: [cyan]{size_mb:.2f} MB[/]")
+            else:
+                console.print(f"[bold red]Error:[/] {message}")
+        elif output_format == "json":
+            result = {
+                "success": success,
+                "message": message,
+                "backup_path": backup_path
+            }
+            if backup_path and os.path.exists(backup_path):
+                result["backup_size"] = os.path.getsize(backup_path)
+            
+            click.echo(json.dumps(result, indent=2))
+        
+        return 0 if success else 1
+    
+    @backup_group.command(name="list")
+    @click.option("--limit", "-l", type=int, default=None, help="Limit the number of backups to show.")
+    @click.option("--backup-dir", "-d", help="Custom directory to look for backups.")
+    @click.option("--output-format", "-f", type=click.Choice(["text", "json"]), default="text", help="Output format.")
+    def list_backups(limit, backup_dir, output_format):
+        """
+        List available backups.
+        
+        Displays a list of all available backups with details such as creation date,
+        size, and included note count.
+        
+        Examples:
+        
+        \b
+        # List all backups
+        marknote backup list
+        
+        \b
+        # List only the 5 most recent backups
+        marknote backup list --limit 5
+        
+        \b
+        # List backups from a specific directory in JSON format
+        marknote backup list --backup-dir /path/to/backups --output-format json
+        """
+        from app.core.backup_manager import BackupManager
+        from app.core.note_manager import NoteManager
+        
+        console = Console()
+        
+        # Initialize managers
+        note_manager = NoteManager()
+        backup_manager = BackupManager(notes_dir=note_manager.notes_dir, backup_dir=backup_dir)
+        
+        # Get list of backups
+        backups = backup_manager.list_backups()
+        
+        # Apply limit if specified
+        if limit is not None and limit > 0:
+            backups = backups[:limit]
+            
+        # Display results
+        if output_format == "text":
+            if not backups:
+                console.print("[italic]No backups found.[/]")
+                return 0
+                
+            table = Table(title="Available Backups")
+            table.add_column("Filename", style="cyan")
+            table.add_column("Created", style="green")
+            table.add_column("Size", style="magenta", justify="right")
+            table.add_column("Notes", justify="right")
+            
+            for backup in backups:
+                filename = backup["filename"]
+                
+                # Format created date
+                created_date = datetime.fromtimestamp(backup["created_at"]).strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Format size
+                size_mb = backup["size"] / (1024 * 1024)
+                size_str = f"{size_mb:.2f} MB"
+                
+                # Get note count from metadata if available
+                note_count = "N/A"
+                if "metadata" in backup and isinstance(backup["metadata"], dict):
+                    if "included_notes" in backup["metadata"]:
+                        note_count = str(backup["metadata"]["included_notes"])
+                
+                table.add_row(filename, created_date, size_str, note_count)
+            
+            console.print(table)
+        elif output_format == "json":
+            click.echo(json.dumps(backups, indent=2, default=str))
+        
+        return 0
+    
+    @backup_group.command(name="info")
+    @click.argument("backup_name", type=str)
+    @click.option("--backup-dir", "-d", help="Custom directory to look for backups.")
+    @click.option("--output-format", "-f", type=click.Choice(["text", "json"]), default="text", help="Output format.")
+    def backup_info(backup_name, backup_dir, output_format):
+        """
+        Show detailed information about a backup.
+        
+        Displays complete information about a specific backup, including
+        its metadata, note count, and filtering criteria used during creation.
+        
+        Examples:
+        
+        \b
+        # Show information about a specific backup
+        marknote backup info marknote_backup_20230501_123045.zip
+        
+        \b
+        # Show information in JSON format
+        marknote backup info my_backup.zip --output-format json
+        """
+        from app.core.backup_manager import BackupManager
+        from app.core.note_manager import NoteManager
+        
+        console = Console()
+        
+        # Initialize managers
+        note_manager = NoteManager()
+        backup_manager = BackupManager(notes_dir=note_manager.notes_dir, backup_dir=backup_dir)
+        
+        # Get backup info
+        backup_info = backup_manager.get_backup_info(backup_name)
+        
+        if not backup_info:
+            if output_format == "text":
+                console.print(f"[bold red]Error:[/] Backup '{backup_name}' not found.")
+            else:
+                click.echo(json.dumps({"success": False, "error": f"Backup '{backup_name}' not found."}))
+            return 1
+            
+        # Display results
+        if output_format == "text":
+            console.print(f"[bold]Backup Information: [cyan]{backup_info['filename']}[/][/]")
+            
+            # Create a panel for basic info
+            basic_info = [
+                f"Created: {datetime.fromtimestamp(backup_info['created_at']).strftime('%Y-%m-%d %H:%M:%S')}",
+                f"Size: {backup_info['size'] / (1024 * 1024):.2f} MB",
+                f"Notes: {backup_info.get('note_count', 'N/A')}",
+                f"Version files: {backup_info.get('version_count', 'N/A')}",
+                f"Archived notes: {backup_info.get('archive_count', 'N/A')}",
+                f"Total files: {backup_info.get('all_files_count', 'N/A')}"
+            ]
+            
+            console.print(Panel("\n".join(basic_info), title="Basic Information", expand=False))
+            
+            # Display metadata if available
+            if "metadata" in backup_info and backup_info["metadata"]:
+                metadata_table = Table(title="Backup Metadata")
+                metadata_table.add_column("Property", style="cyan")
+                metadata_table.add_column("Value")
+                
+                metadata = backup_info["metadata"]
+                
+                # Add key metadata fields
+                for key, value in metadata.items():
+                    if key != "included_note_files" and key != "user_metadata":  # Skip file list and user metadata for now
+                        metadata_table.add_row(key, str(value))
+                
+                console.print(metadata_table)
+                
+                # Display user metadata in a separate panel if available
+                if "user_metadata" in metadata:
+                    user_metadata = metadata["user_metadata"]
+                    console.print(Panel(str(json.dumps(user_metadata, indent=2)), 
+                                      title="User Metadata", expand=False))
+                
+                # Show included note files if available
+                if "included_note_files" in metadata and metadata["included_note_files"]:
+                    file_count = len(metadata["included_note_files"])
+                    if file_count <= 10:  # Only show all files if there are 10 or fewer
+                        files_panel = Panel("\n".join(metadata["included_note_files"]),
+                                         title=f"Included Notes ({file_count})", expand=False)
+                    else:
+                        # Show first 5 and indicate there are more
+                        files_list = metadata["included_note_files"][:5]
+                        files_list.append(f"... and {file_count - 5} more files")
+                        files_panel = Panel("\n".join(files_list),
+                                         title=f"Included Notes ({file_count})", expand=False)
+                    
+                    console.print(files_panel)
+                    
+            # Show any errors
+            if "error" in backup_info:
+                console.print(f"[bold red]Error:[/] {backup_info['error']}")
+                
+        elif output_format == "json":
+            click.echo(json.dumps(backup_info, indent=2, default=str))
+            
+        return 0
+    
+    @backup_group.command(name="restore")
+    @click.argument("backup_name", type=str)
+    @click.option("--restore-dir", "-d", help="Directory to restore to. If not provided, restores to the default notes directory.")
+    @click.option("--overwrite", "-o", is_flag=True, help="Overwrite existing files during restore.")
+    @click.option("--no-versions", is_flag=True, help="Don't restore version history.")
+    @click.option("--no-archives", is_flag=True, help="Don't restore archived notes.")
+    @click.option("--backup-dir", help="Custom directory to look for backups.")
+    @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
+    @click.option("--output-format", "-f", type=click.Choice(["text", "json"]), default="text", help="Output format.")
+    def restore_backup(backup_name, restore_dir, overwrite, no_versions, no_archives, backup_dir, yes, output_format):
+        """
+        Restore notes from a backup.
+        
+        Extracts notes and optionally version history and archived notes from a backup file.
+        By default, existing files are not overwritten, but this behavior can be changed
+        with the --overwrite flag.
+        
+        Examples:
+        
+        \b
+        # Restore from a backup (will prompt for confirmation)
+        marknote backup restore marknote_backup_20230501_123045.zip
+        
+        \b
+        # Restore to a specific directory, overwriting existing files
+        marknote backup restore my_backup.zip --restore-dir ~/new_notes --overwrite
+        
+        \b
+        # Restore only the notes, without version history or archives
+        marknote backup restore my_backup.zip --no-versions --no-archives
+        
+        \b
+        # Skip confirmation prompt
+        marknote backup restore my_backup.zip --yes
+        """
+        from app.core.backup_manager import BackupManager
+        from app.core.note_manager import NoteManager
+        
+        console = Console()
+        
+        # Initialize managers
+        note_manager = NoteManager()
+        backup_manager = BackupManager(notes_dir=note_manager.notes_dir, backup_dir=backup_dir)
+        
+        # Verify backup exists
+        backup_info = backup_manager.get_backup_info(backup_name)
+        if not backup_info:
+            if output_format == "text":
+                console.print(f"[bold red]Error:[/] Backup '{backup_name}' not found.")
+            else:
+                click.echo(json.dumps({"success": False, "error": f"Backup '{backup_name}' not found."}))
+            return 1
+            
+        # Determine target directory
+        target_dir = restore_dir if restore_dir else note_manager.notes_dir
+        
+        # Show what we're going to do
+        if output_format == "text":
+            console.print("[bold]Restore Operation:[/]")
+            console.print(f"  Backup: [cyan]{backup_info['filename']}[/]")
+            console.print(f"  Target Directory: [cyan]{target_dir}[/]")
+            console.print(f"  Overwrite Existing Files: [cyan]{'Yes' if overwrite else 'No'}[/]")
+            console.print(f"  Restore Version History: [cyan]{'No' if no_versions else 'Yes'}[/]")
+            console.print(f"  Restore Archived Notes: [cyan]{'No' if no_archives else 'Yes'}[/]")
+            
+            # Show warning if target directory exists and is not empty
+            if os.path.exists(target_dir) and os.listdir(target_dir):
+                console.print("\n[bold yellow]Warning:[/] Target directory exists and is not empty.")
+                if not overwrite:
+                    console.print("         Existing files will be kept (use --overwrite to replace them).")
+                else:
+                    console.print("[bold red]         Existing files will be overwritten![/]")
+            
+            # Confirm restoration
+            if not yes:
+                proceed = click.confirm("\nDo you want to proceed with the restore?", default=False)
+                if not proceed:
+                    console.print("Restore operation cancelled.")
+                    return 0
+            
+            console.print("\nRestoring from backup...", style="bold")
+        
+        # Perform restore with progress display
+        with Progress(transient=True) as progress:
+            if output_format == "text":
+                task = progress.add_task("Restoring from backup...", total=None)
+            
+            # Execute restore
+            success, message, stats = backup_manager.restore_backup(
+                backup_name=backup_name,
+                restore_dir=target_dir,
+                overwrite=overwrite,
+                restore_versions=not no_versions,
+                restore_archives=not no_archives
+            )
+            
+            if output_format == "text":
+                progress.update(task, completed=True)
+        
+        # Display results
+        if output_format == "text":
+            if success:
+                console.print(f"[bold green]Success:[/] {message}")
+                
+                # Display stats in a table
+                if stats:
+                    table = Table(title="Restoration Statistics")
+                    table.add_column("Item", style="cyan")
+                    table.add_column("Count", justify="right")
+                    
+                    table.add_row("Notes Restored", str(stats.get("notes_restored", 0)))
+                    table.add_row("Notes Skipped", str(stats.get("notes_skipped", 0)))
+                    
+                    if not no_versions:
+                        table.add_row("Versions Restored", str(stats.get("versions_restored", 0)))
+                        table.add_row("Versions Skipped", str(stats.get("versions_skipped", 0)))
+                        
+                    if not no_archives:
+                        table.add_row("Archives Restored", str(stats.get("archives_restored", 0)))
+                        table.add_row("Archives Skipped", str(stats.get("archives_skipped", 0)))
+                    
+                    console.print(table)
+                    
+                    # Show errors if any
+                    if "errors" in stats and stats["errors"]:
+                        console.print("[bold red]Errors during restore:[/]")
+                        for error in stats["errors"][:10]:  # Limit to first 10 errors
+                            console.print(f"  - {error}")
+                        
+                        if len(stats["errors"]) > 10:
+                            console.print(f"  ... and {len(stats['errors']) - 10} more errors.")
+            else:
+                console.print(f"[bold red]Error:[/] {message}")
+                
+                # Show errors if available
+                if stats and "errors" in stats and stats["errors"]:
+                    console.print("[bold red]Details:[/]")
+                    for error in stats["errors"][:5]:  # Limit to first 5 errors
+                        console.print(f"  - {error}")
+                        
+                    if len(stats["errors"]) > 5:
+                        console.print(f"  ... and {len(stats['errors']) - 5} more errors.")
+        elif output_format == "json":
+            result = {
+                "success": success,
+                "message": message,
+                "stats": stats
+            }
+            click.echo(json.dumps(result, indent=2, default=str))
+        
+        return 0 if success else 1
+    
+    @backup_group.command(name="delete")
+    @click.argument("backup_name", type=str)
+    @click.option("--backup-dir", help="Custom directory to look for backups.")
+    @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
+    @click.option("--output-format", "-f", type=click.Choice(["text", "json"]), default="text", help="Output format.")
+    def delete_backup(backup_name, backup_dir, yes, output_format):
+        """
+        Delete a backup file.
+        
+        Permanently removes a backup file from the backups directory.
+        
+        Examples:
+        
+        \b
+        # Delete a backup (will prompt for confirmation)
+        marknote backup delete marknote_backup_20230501_123045.zip
+        
+        \b
+        # Delete without confirmation
+        marknote backup delete old_backup.zip --yes
+        """
+        from app.core.backup_manager import BackupManager
+        from app.core.note_manager import NoteManager
+        
+        console = Console()
+        
+        # Initialize managers
+        note_manager = NoteManager()
+        backup_manager = BackupManager(notes_dir=note_manager.notes_dir, backup_dir=backup_dir)
+        
+        # Verify backup exists
+        backup_info = backup_manager.get_backup_info(backup_name)
+        if not backup_info:
+            if output_format == "text":
+                console.print(f"[bold red]Error:[/] Backup '{backup_name}' not found.")
+            else:
+                click.echo(json.dumps({"success": False, "error": f"Backup '{backup_name}' not found."}))
+            return 1
+            
+        # Confirm deletion
+        if not yes and output_format == "text":
+            console.print(f"[bold]You are about to delete the backup:[/] [cyan]{backup_name}[/]")
+            console.print("[bold red]This action cannot be undone![/]")
+            
+            proceed = click.confirm("Are you sure you want to proceed?", default=False)
+            if not proceed:
+                console.print("Delete operation cancelled.")
+                return 0
+        
+        # Delete the backup
+        success, message = backup_manager.delete_backup(backup_name)
+        
+        # Display results
+        if output_format == "text":
+            if success:
+                console.print(f"[bold green]Success:[/] {message}")
+            else:
+                console.print(f"[bold red]Error:[/] {message}")
+        elif output_format == "json":
+            result = {
+                "success": success,
+                "message": message
+            }
+            click.echo(json.dumps(result, indent=2))
+        
+        return 0 if success else 1
+
 def register_archive_commands(cli_group):
     """Register archive commands with the main CLI group."""
     cli_group.add_command(archive_commands)
@@ -4445,6 +4966,7 @@ def register_tag_commands(cli_group):
 def register_template_commands(cli_group):
     """Register template commands with the main CLI group."""
     cli_group.add_command(template_commands)
+
 
 if __name__ == "__main__":
     cli()
