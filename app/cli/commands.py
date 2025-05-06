@@ -26,7 +26,7 @@ import app.models.note
 
 from app.core.note_manager import NoteManager
 from app.utils.encryption import prompt_for_password
-from app.utils.template_manager import TemplateManager
+from app.utils.template_manager import TemplateManager, get_editor_handlers
 from app.utils.editor_handler import edit_file, edit_content, is_valid_editor, get_available_editors
 from app.utils.file_handler import parse_frontmatter
 from app.models.note import Note
@@ -3848,6 +3848,462 @@ def list_tags(count: bool, sort: str, limit: Optional[int], output_dir: Optional
     return 0
 
 
+
+@cli.group(name="templates-manage")
+def template_commands():
+    """Commands for managing note templates."""
+    pass
+
+@template_commands.command(name="create")
+@click.argument("name")
+@click.option("--from", "-f", "base_template", help="Base template to use.")
+@click.option("--editor", "-e", help="Open in editor after creation. Optionally specify editor name.")
+@click.option("--open-editor", is_flag=True, help="Open in default editor after creation.")
+@click.option("--empty", is_flag=True, help="Create an empty template (ignores --from).")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts.")
+def create_template(name: str, base_template: Optional[str] = None, editor: Optional[str] = None, open_editor: bool = False, empty: bool = False, yes: bool = False):
+    """
+    Create a new template with the given NAME.
+    
+    Examples:
+        templates-manage create project
+        templates-manage create research --from meeting
+    """
+    try:
+        template_manager = TemplateManager()
+        
+        # Check if the name is valid
+        if not name or not name.isalnum() and not name.replace('_', '').isalnum():
+            console.print("[bold red]Error:[/bold red] Template name must be alphanumeric (underscores allowed)")
+            return 1
+            
+        if not yes:
+            if empty:
+                confirm_message = f"Create a new empty template '{name}'?"
+            elif base_template:
+                confirm_message = f"Create a new template '{name}' based on '{base_template}'?"
+            else:
+                confirm_message = f"Create a new template '{name}' with default content?"
+                
+            if not click.confirm(confirm_message):
+                console.print("[yellow]Template creation cancelled.[/yellow]")
+                return 0
+        
+        # Create the template
+        content = "" if empty else None
+        template_path = template_manager.create_template(name, content, base_template)
+        
+        console.print(f"[green]Template '{name}' created successfully.[/green]")
+        
+        # Open in editor if requested
+        if editor or open_editor:
+            editor_handlers = get_editor_handlers()
+            if editor_handlers:
+                try:
+                    editor_handlers.edit_file(template_path, editor)
+                    console.print("[green]Template opened in editor.[/green]")
+                except Exception as e:
+                    console.print(f"[yellow]Warning: Could not open template in editor: {str(e)}[/yellow]")
+        return 0
+        
+    except FileExistsError:
+        console.print(f"[bold red]Error:[/bold red] Template '{name}' already exists")
+        return 1
+    except FileNotFoundError as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+    except ValueError as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        return 1
+    except Exception as e:
+        console.print(f"[bold red]Error creating template:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+@template_commands.command(name="edit")
+@click.argument("name")
+@click.option("--output", "-o", help="Save to a file instead of opening in editor.")
+@click.option("--editor", "-e", help="Specify which editor to use for editing the template.")
+def edit_template(name: str, output: Optional[str], editor: Optional[str] = None):
+    """
+    Edit an existing template with NAME.
+    """
+    try:
+        template_manager = TemplateManager()
+        
+        # Check if template exists
+        template_path = os.path.join(template_manager.templates_dir, name, "template.md")
+        if not os.path.exists(template_path):
+            console.print(f"[bold red]Error:[/bold red] Template '{name}' not found")
+            return 1
+            
+        # Read template content
+        with open(template_path, 'r') as f:
+            template_content = f.read()
+            
+        # Either save to file or open in editor
+        if output:
+            with open(output, 'w') as f:
+                f.write(template_content)
+            console.print(f"[green]Template '{name}' saved to {output}.[/green]")
+        else:
+            editor_handlers = get_editor_handlers()
+            if editor_handlers:
+                try:
+                    editor_handlers.edit_file(template_path)
+                    console.print(f"[green]Template '{name}' edited successfully.[/green]")
+                except Exception as e:
+                    console.print(f"[bold red]Error:[/bold red] Could not open template in editor: {str(e)}")
+                    return 1
+            else:
+                console.print("[bold red]Error:[/bold red] No editor available")
+                return 1
+                
+        return 0
+        
+    except Exception as e:
+        console.print(f"[bold red]Error editing template:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+@template_commands.command(name="show")
+@click.argument("name")
+@click.option("--raw/--formatted", default=False, help="Show raw template or with formatting.")
+def show_template(name: str, raw: bool):
+    """
+    Show the content of a template with NAME.
+    """
+    try:
+        template_manager = TemplateManager()
+        
+        # Check if template exists
+        template_path = os.path.join(template_manager.templates_dir, name, "template.md")
+        if not os.path.exists(template_path):
+            console.print(f"[bold red]Error:[/bold red] Template '{name}' not found")
+            return 1
+            
+        # Read template content
+        with open(template_path, 'r') as f:
+            template_content = f.read()
+            
+        # Display template content
+        if raw:
+            console.print(template_content)
+        else:
+            console.print(Panel(Markdown(template_content), 
+                            title=f"Template: {name}",
+                            border_style="cyan"))
+            
+        return 0
+        
+    except Exception as e:
+        console.print(f"[bold red]Error showing template:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+@template_commands.command(name="delete")
+@click.argument("name")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
+def delete_template(name: str, yes: bool):
+    """
+    Delete a template with NAME.
+    
+    Built-in templates cannot be deleted.
+    """
+    try:
+        template_manager = TemplateManager()
+        
+        if not yes:
+            if not click.confirm(f"Are you sure you want to delete template '{name}'?"):
+                console.print("[yellow]Template deletion cancelled.[/yellow]")
+                return 0
+            
+        try:
+            template_manager.delete_template(name)
+            console.print(f"[green]Template '{name}' deleted successfully.[/green]")
+        except ValueError as e:
+            console.print(f"[bold red]Error:[/bold red] {str(e)}")
+            return 1
+        except FileNotFoundError:
+            console.print(f"[bold red]Error:[/bold red] Template '{name}' not found")
+            return 1
+            
+        return 0
+        
+    except Exception as e:
+        console.print(f"[bold red]Error deleting template:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+@template_commands.command(name="copy")
+@click.argument("source")
+@click.argument("destination")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
+def copy_template(source: str, destination: str, yes: bool):
+    """
+    Copy a template from SOURCE to DESTINATION.
+    """
+    try:
+        template_manager = TemplateManager()
+        
+        # Check if source template exists
+        source_path = os.path.join(template_manager.templates_dir, source, "template.md")
+        if not os.path.exists(source_path):
+            console.print(f"[bold red]Error:[/bold red] Source template '{source}' not found")
+            return 1
+            
+        # Read source template
+        with open(source_path, 'r') as f:
+            content = f.read()
+            
+        # Confirm copy
+        if not yes:
+            if not click.confirm(f"Copy template '{source}' to '{destination}'?"):
+                console.print("[yellow]Template copy cancelled.[/yellow]")
+                return 0
+        
+        try:
+            # Create destination template with source content
+            template_path = template_manager.create_template(destination, content)
+            
+            # Update the type field in the new template
+            with open(template_path, 'r') as f:
+                updated_content = f.read()
+                
+            updated_content = updated_content.replace(f"type: {source}", f"type: {destination}")
+            
+            with open(template_path, 'w') as f:
+                f.write(updated_content)
+                
+            console.print(f"[green]Template copied from '{source}' to '{destination}'.[/green]")
+            
+        except FileExistsError:
+            console.print(f"[bold red]Error:[/bold red] Destination template '{destination}' already exists")
+            return 1
+        except ValueError as e:
+            console.print(f"[bold red]Error:[/bold red] {str(e)}")
+            return 1
+            
+        return 0
+        
+    except Exception as e:
+        console.print(f"[bold red]Error copying template:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+@template_commands.command(name="list")
+@click.option("--details", "-d", is_flag=True, help="Show more details about templates.")
+def list_templates(details: bool):
+    """
+    List all available templates.
+    """
+    try:
+        template_manager = TemplateManager()
+        templates = template_manager.list_templates()
+        
+        if not templates:
+            console.print("[yellow]No templates found.[/yellow]")
+            return 0
+            
+        # Sort templates: built-in first, then alphabetically
+        builtin_templates = ["default", "daily", "meeting", "journal"]
+        builtin = [t for t in templates if t in builtin_templates]
+        custom = [t for t in templates if t not in builtin_templates]
+        
+        sorted_builtin = sorted(builtin, key=lambda x: builtin_templates.index(x))
+        sorted_custom = sorted(custom)
+        
+        sorted_templates = sorted_builtin + sorted_custom
+        
+        # Display templates
+        if details:
+            table = Table(title="Available Note Templates")
+            table.add_column("Name", style="cyan")
+            table.add_column("Type", style="magenta")
+            table.add_column("Size", style="blue")
+            
+            for template in sorted_templates:
+                template_path = os.path.join(template_manager.templates_dir, template, "template.md")
+                template_type = "Built-in" if template in builtin_templates else "Custom"
+                template_size = os.path.getsize(template_path) if os.path.exists(template_path) else 0
+                
+                table.add_row(
+                    template,
+                    template_type,
+                    f"{template_size} bytes"
+                )
+                
+            console.print(table)
+        else:
+            console.print("[bold blue]Available templates:[/bold blue]")
+            for template in sorted_builtin:
+                console.print(f"- [cyan]{template}[/cyan] [dim](built-in)[/dim]")
+                
+            if sorted_custom:
+                console.print("\n[bold blue]Custom templates:[/bold blue]")
+                for template in sorted_custom:
+                    console.print(f"- [green]{template}[/green]")
+            
+        return 0
+        
+    except Exception as e:
+        console.print(f"[bold red]Error listing templates:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+@archive_commands.command(name="auto-date")
+@click.argument("date")
+@click.option("--field", "-f", default="created_at",
+              help="The date field to compare ('created_at', 'updated_at', or a custom field).")
+@click.option("--before/--after", default=True,
+              help="Archive notes created before the date (--before) or after the date (--after).")
+@click.option("--reason", "-r", default="Auto-archived by date",
+              help="Reason for archiving the notes.")
+@click.option("--move/--no-move", "-m/-n", default=True,
+              help="Move notes to a dedicated archive directory.")
+@click.option("--dry-run", is_flag=True, help="Show what would be archived without archiving.")
+def auto_archive_by_date(date: str, field: str, before: bool, reason: str, move: bool, dry_run: bool):
+    """
+    Auto-archive notes based on a specific date.
+    
+    DATE should be in ISO format (YYYY-MM-DD).
+    
+    Examples:
+      archive auto-date 2023-01-01            # Archive notes created before Jan 1, 2023
+      archive auto-date 2023-06-15 --after    # Archive notes created after June 15, 2023
+      archive auto-date 2023-03-01 --field updated_at  # Archive notes updated before Mar 1, 2023
+    """
+    try:
+        # Validate the date format
+        try:
+            if "T" in date:
+                # Handle full ISO format with time
+                archive_date = datetime.fromisoformat(date)
+            else:
+                # Handle date-only format
+                archive_date = datetime.fromisoformat(f"{date}T00:00:00")
+        except ValueError:
+            console.print(f"[bold red]Error:[/bold red] Invalid date format. Use YYYY-MM-DD or ISO format.")
+            return 1
+            
+        # Show what we're going to do
+        date_comparison = "before" if before else "after"
+        console.print(f"Finding notes with {field} {date_comparison} [cyan]{date}[/cyan]...")
+        
+        # Create archive-enabled note manager
+        note_manager = ArchiveNoteManager()
+        
+        if dry_run:
+            # Find notes that would be archived without actually archiving
+            console.print(f"[yellow]DRY RUN[/yellow]: Notes will not actually be archived.")
+            
+            # Get all notes that match the criteria
+            all_notes = note_manager.list_notes()
+            to_archive = []
+            
+            for note in all_notes:
+                # Skip already archived notes
+                if hasattr(note, 'is_archived') and note.is_archived:
+                    continue
+                    
+                # Get the date field value
+                date_value = None
+                if field in note.metadata:
+                    try:
+                        # Try to parse the date from metadata
+                        if isinstance(note.metadata[field], str):
+                            date_value = datetime.fromisoformat(note.metadata[field])
+                        elif isinstance(note.metadata[field], datetime):
+                            date_value = note.metadata[field]
+                        else:
+                            date_value = datetime.fromisoformat(str(note.metadata[field]))
+                    except (ValueError, TypeError):
+                        console.print(f"[yellow]Warning:[/yellow] Could not parse date field '{field}' for note '{note.title}'")
+                        continue
+                elif hasattr(note, field):
+                    # If it's a direct attribute of the note
+                    date_value = getattr(note, field)
+                    
+                if date_value is None:
+                    continue
+                    
+                # Check if we should archive based on the date comparison
+                should_archive = False
+                if before and date_value < archive_date:
+                    should_archive = True
+                elif not before and date_value > archive_date:
+                    should_archive = True
+                    
+                if should_archive:
+                    to_archive.append(note)
+                    
+            # Display the notes that would be archived
+            if to_archive:
+                console.print(f"\nWould archive [cyan]{len(to_archive)}[/cyan] notes:")
+                for note in to_archive:
+                    date_value = None
+                    if field in note.metadata:
+                        date_value = note.metadata[field]
+                    elif hasattr(note, field):
+                        date_value = getattr(note, field)
+                        if isinstance(date_value, datetime):
+                            date_value = date_value.isoformat()
+                    
+                    console.print(f"  - [yellow]{note.title}[/yellow] ({field}: {date_value})")
+            else:
+                console.print("\n[green]No notes found that would be archived.[/green]")
+        else:
+            # Actually archive the notes
+            console.print("Archiving notes...")
+            
+            results = note_manager.auto_archive_by_date(
+                date,
+                field=field,
+                before_date=before,
+                reason=reason,
+                move_to_archive_dir=move
+            )
+            
+            # Display results
+            archived_count = sum(1 for msg in results.values() if "archived successfully" in msg)
+            
+            if archived_count > 0:
+                console.print(f"\n[green]Successfully archived {archived_count} notes.[/green]")
+                
+                # Show details
+                table = Table(show_header=True, header_style="bold cyan")
+                table.add_column("Note Path")
+                table.add_column("Status")
+                
+                for path, message in results.items():
+                    status_color = "green" if "archived successfully" in message else "red" 
+                    table.add_row(path, f"[{status_color}]{message}[/{status_color}]")
+                
+                console.print(table)
+            else:
+                console.print("\n[yellow]No notes were archived.[/yellow]")
+                
+                if results:
+                    console.print("\nDetails:")
+                    for path, message in results.items():
+                        console.print(f"  - {path}: {message}")
+        
+        return 0
+            
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
 def register_archive_commands(cli_group):
     """Register archive commands with the main CLI group."""
     cli_group.add_command(archive_commands)
@@ -3870,6 +4326,10 @@ def register_delete_commands(cli_group):
 def register_tag_commands(cli_group):
     """Register tag commands with the main CLI group."""
     cli_group.add_command(tag_commands)
+
+def register_template_commands(cli_group):
+    """Register template commands with the main CLI group."""
+    cli_group.add_command(template_commands)
 
 if __name__ == "__main__":
     cli()

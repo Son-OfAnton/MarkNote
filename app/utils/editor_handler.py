@@ -186,3 +186,25 @@ def edit_content(content: str, custom_editor: Optional[str] = None) -> Tuple[boo
     
     except Exception as e:
         return False, content, f"Error opening editor: {str(e)}"
+    
+
+class EditorHandler:
+    """
+    Handler for editing files with various editors.
+    """
+    def __init__(self, default_editor: Optional[str] = None):
+        self.default_editor = default_editor
+        
+    def edit_file(self, file_path: str, custom_editor: Optional[str] = None) -> Tuple[bool, str]:
+        """
+        Open a file in an editor.
+        
+        Args:
+            file_path: Path to the file to edit.
+            custom_editor: Optional specific editor to use instead of the default.
+            
+        Returns:
+            A tuple of (success, error_message).
+        """
+        # Use the function from the module
+        return edit_file(file_path, custom_editor or self.default_editor)

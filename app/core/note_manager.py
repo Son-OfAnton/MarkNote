@@ -1958,3 +1958,4 @@ class NoteManager:
                 results[note.title] = f"✗ Error: {str(e)}"
         
         return results
+    

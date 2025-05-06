@@ -88,3 +88,38 @@ class ArchivedNote(Note):
             
         delta = datetime.now() - self.archived_at
         return delta.days
+    
+    def auto_archive_by_date(self, date_str: str, field: str = "created_at",
+                           before_date: bool = True, reason: str = "Auto-archived by date",
+                           move_to_archive_dir: bool = True) -> Dict[str, str]:
+        """
+        Auto-archive notes based on a specific date field.
+        
+        Args:
+            date_str: Date in ISO format (YYYY-MM-DD)
+            field: The metadata field to compare ("created_at", "updated_at", or a custom date field)
+            before_date: If True, archives notes before the date; if False, archives notes after the date
+            reason: Reason for archiving
+            move_to_archive_dir: Whether to move notes to the archive directory
+            
+        Returns:
+            Dictionary mapping note paths to success/error messages
+        """
+        try:
+            # Parse the date string
+            if "T" in date_str:
+                # Handle full ISO format with time (e.g. 2023-01-01T12:00:00)
+                archive_date = datetime.fromisoformat(date_str)
+            else:
+                # Handle date-only format (e.g. 2023-01-01)
+                archive_date = datetime.fromisoformat(f"{date_str}T00:00:00")
+                
+            return self.archive_manager.auto_archive_by_date(
+                archive_date, 
+                field=field,
+                before_date=before_date,
+                reason=reason,
+                move_to_archive_dir=move_to_archive_dir
+            )
+        except ValueError as e:
+            raise ValueError(f"Invalid date format: {str(e)}. Use YYYY-MM-DD or ISO format.")

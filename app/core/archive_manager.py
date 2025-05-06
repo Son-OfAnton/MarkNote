@@ -420,3 +420,83 @@ class ArchiveManager:
             return metadata.get('is_archived', False)
         except Exception:
             return False
+        
+
+    def auto_archive_by_date(self, archive_date: datetime, field: str = "created_at", 
+                           before_date: bool = True, reason: str = "Auto-archived by date",
+                           move_to_archive_dir: bool = True) -> Dict[str, str]:
+        """
+        Auto-archive notes based on a specific date field.
+        
+        Args:
+            archive_date: The date to compare against
+            field: The metadata field to compare ("created_at", "updated_at", or a custom date field)
+            before_date: If True, archives notes before the date; if False, archives notes after the date
+            reason: Reason for archiving
+            move_to_archive_dir: Whether to move notes to the archive directory
+            
+        Returns:
+            Dictionary mapping note paths to success/error messages
+        """
+        results = {}
+        
+        # Get all note files
+        all_notes = list_note_files(self.notes_dir)
+        
+        for note_path in all_notes:
+            try:
+                # Skip notes that are already in the archive directory
+                if self.archive_dir in note_path:
+                    continue
+                    
+                # Read the note
+                metadata, _ = read_note_file(note_path)
+                
+                # Skip notes that are already archived
+                if metadata.get('is_archived', False):
+                    continue
+                
+                # Get the date value from metadata
+                date_value = None
+                if field in metadata:
+                    try:
+                        # Handle both ISO format strings and date objects
+                        if isinstance(metadata[field], str):
+                            date_value = datetime.fromisoformat(metadata[field])
+                        elif isinstance(metadata[field], datetime):
+                            date_value = metadata[field]
+                        else:
+                            # Try to parse as string, otherwise skip
+                            date_value = datetime.fromisoformat(str(metadata[field]))
+                    except (ValueError, TypeError):
+                        # If parsing fails, skip this note
+                        results[note_path] = f"Error: Could not parse date field '{field}'"
+                        continue
+                
+                # Skip notes that don't have the specified date field
+                if date_value is None:
+                    results[note_path] = f"Skipped: Note does not have '{field}' field"
+                    continue
+                
+                # Determine if the note should be archived based on date comparison
+                should_archive = False
+                if before_date and date_value < archive_date:
+                    should_archive = True
+                elif not before_date and date_value > archive_date:
+                    should_archive = True
+                    
+                if should_archive:
+                    date_str = date_value.strftime('%Y-%m-%d')
+                    comparison = "before" if before_date else "after"
+                    archive_reason = f"{reason} ({field}: {date_str} is {comparison} {archive_date.strftime('%Y-%m-%d')})"
+                    
+                    success, message, _ = self.archive_note(
+                        note_path,
+                        reason=archive_reason,
+                        move_to_archive_dir=move_to_archive_dir
+                    )
+                    results[note_path] = message
+            except Exception as e:
+                results[note_path] = f"Error: {str(e)}"
+                
+        return results
