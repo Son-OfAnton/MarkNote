@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Set
 
+from app.core.word_frequency_analyzer import analyze_note_word_frequency
+
 @dataclass
 class Note:
     """
@@ -148,3 +150,35 @@ class Note:
             List of tags.
         """
         return self.tags
+    
+
+    def get_word_frequency(self,
+                      stopwords: Optional[Set[str]] = None,
+                      min_word_length: int = 3,
+                      max_words: int = 100,
+                      case_sensitive: bool = False,
+                      include_stats: bool = True,
+                      include_raw: bool = False) -> Dict[str, Any]:
+        """
+        Get word frequency analysis for this note.
+        
+        Args:
+            stopwords: Optional set of words to exclude from analysis
+            min_word_length: Minimum length of words to include in analysis
+            max_words: Maximum number of words to return in results
+            case_sensitive: Whether to treat different cases as different words
+            include_stats: Whether to include general statistics
+            include_raw: Whether to include the original and processed text
+            
+        Returns:
+            Dictionary with analysis results
+        """
+        return analyze_note_word_frequency(
+            note_content=self.content,
+            stopwords=stopwords,
+            min_word_length=min_word_length,
+            max_words=max_words,
+            case_sensitive=case_sensitive,
+            include_stats=include_stats,
+            include_raw=include_raw
+        )

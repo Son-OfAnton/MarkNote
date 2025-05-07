@@ -1,7 +1,9 @@
 """
 CLI commands for MarkNote
 """
+import csv
 from datetime import date, datetime
+from io import StringIO
 import json
 import os
 import sys
@@ -5513,6 +5515,640 @@ def register_cleanup_commands(cli_group):
         elif dry_run and (empty_notes or duplicate_groups):
             console.print("\n[yellow]Note:[/] This was a dry run. No notes were actually deleted.")
             console.print("To perform the actual cleanup, run the command without --dry-run option.")
+        
+        return 0
+    
+def register_wordfreq_commands(cli_group):
+    """
+    Register word frequency commands to the CLI.
+    """
+    @cli_group.command(name="wordfreq")
+    @click.argument("title", type=str)
+    @click.option("--category", "-c", help="Category of the note.")
+    @click.option("--output-dir", "-o", help="Directory to look for the note.")
+    @click.option("--min-length", "-m", type=int, default=3, help="Minimum word length to include.")
+    @click.option("--max-words", "-n", type=int, default=50, help="Maximum number of words to display.")
+    @click.option("--include-stopwords", is_flag=True, help="Include common stopwords in the analysis.")
+    @click.option("--case-sensitive", is_flag=True, help="Make word matching case-sensitive.")
+    @click.option("--visualization", "-v", is_flag=True, help="Show simple ASCII visualization of frequencies.")
+    @click.option("--export", "-e", type=click.Choice(['json', 'csv']), help="Export results to JSON or CSV.")
+    @click.option("--export-path", "-p", help="Path to export results to. If not provided, prints to stdout.")
+    @click.option("--output-format", type=click.Choice(["text", "json"]), default="text", help="Output format.")
+    def wordfreq(
+        title, category, output_dir, min_length, max_words, include_stopwords, 
+        case_sensitive, visualization, export, export_path, output_format
+    ):
+        """
+        Analyze word frequency in a note.
+        
+        This command displays the most frequently used words in a note, 
+        with options to filter by word length, exclude common words, 
+        and export the results in various formats.
+        
+        Examples:
+        
+        \b
+        # Basic analysis
+        marknote wordfreq "My Note Title"
+        
+        \b
+        # More detailed analysis with visualization
+        marknote wordfreq "My Note Title" --min-length 4 --max-words 40 --visualization
+        
+        \b
+        # Include common stopwords in the analysis
+        marknote wordfreq "My Note Title" --include-stopwords
+        
+        \b
+        # Export results to JSON
+        marknote wordfreq "My Note Title" --export json --export-path ./word_frequencies.json
+        """
+        from app.core.note_manager import NoteManager
+        from app.core.word_frequency_analyzer import WordFrequencyAnalyzer
+        
+        console = Console()
+        
+        # Initialize note manager
+        note_manager = NoteManager(output_dir)
+        
+        # Get the note
+        note = note_manager.get_note(title, category, output_dir)
+        
+        if not note:
+            if output_format == "text":
+                console.print(f"[bold red]Error:[/] Note '{title}' not found.")
+            else:
+                click.echo(json.dumps({
+                    "success": False,
+                    "error": f"Note '{title}' not found."
+                }))
+            return 1
+        
+        # Create analyzer
+        stopwords = None if include_stopwords else None  # Use default stopwords unless explicitly including them
+        analyzer = WordFrequencyAnalyzer(
+            stopwords=stopwords,
+            min_word_length=min_length,
+            max_words=max_words,
+            case_sensitive=case_sensitive
+        )
+        
+        # Analyze word frequency
+        if output_format == "text":
+            with Progress(transient=True) as progress:
+                task = progress.add_task("Analyzing word frequency...", total=None)
+                word_frequencies = analyzer.analyze(note.content)
+                report = analyzer.generate_report(note.content, include_stats=True)
+                progress.update(task, completed=True)
+        else:
+            word_frequencies = analyzer.analyze(note.content)
+            report = analyzer.generate_report(note.content, include_stats=True)
+        
+        # Handle different output formats
+        if export:
+            # Export to JSON
+            if export == 'json':
+                export_data = report
+                export_str = json.dumps(export_data, indent=2)
+                
+            # Export to CSV
+            elif export == 'csv':
+                csv_buffer = StringIO()
+                writer = csv.writer(csv_buffer)
+                writer.writerow(['Word', 'Frequency'])
+                for item in report['word_frequencies']:
+                    writer.writerow([item['word'], item['count']])
+                export_str = csv_buffer.getvalue()
+                
+            # Write to file or stdout
+            if export_path:
+                with open(export_path, 'w') as f:
+                    f.write(export_str)
+                if output_format == "text":
+                    console.print(f"[bold green]Success:[/] Results exported to '{export_path}'")
+            else:
+                if output_format == "text":
+                    console.print(export_str)
+                else:
+                    click.echo(export_str)
+        
+        # Display results in terminal
+        elif output_format == "text":
+            stats = report['statistics']
+            
+            # Print header
+            console.print(f"[bold]Word Frequency Analysis for:[/] [cyan]{note.title}[/]")
+            
+            # Print statistics
+            console.print(f"\n[bold]Statistics:[/]")
+            console.print(f"  Total words: [cyan]{stats['total_words']}[/]")
+            console.print(f"  Total unique words: [cyan]{stats['total_unique_words_all']}[/]")
+            console.print(f"  Most frequent word: [cyan]{stats['most_frequent_word']}[/] "
+                          f"([cyan]{stats['most_frequent_count']}[/] occurrences)")
+            
+            # Print frequency table
+            console.print(f"\n[bold]Top {len(word_frequencies)} Words:[/]")
+            
+            # Create table
+            table = Table()
+            table.add_column("Rank", style="dim")
+            table.add_column("Word", style="cyan")
+            table.add_column("Count", justify="right")
+            table.add_column("Percentage", justify="right")
+            
+            if visualization:
+                table.add_column("Chart", justify="left")
+            
+            # Calculate percentages
+            total_analyzed = sum(count for _, count in word_frequencies)
+            
+            # Add rows
+            for i, (word, count) in enumerate(word_frequencies, 1):
+                percentage = (count / total_analyzed) * 100
+                
+                row = [
+                    str(i),
+                    word,
+                    str(count),
+                    f"{percentage:.1f}%"
+                ]
+                
+                # Add visualization
+                if visualization:
+                    # Scale the visualization to a max of 30 characters
+                    max_bars = 30
+                    max_count = word_frequencies[0][1] if word_frequencies else 1
+                    bars = int((count / max_count) * max_bars)
+                    bar_chart = "█" * bars
+                    row.append(bar_chart)
+                
+                table.add_row(*row)
+            
+            console.print(table)
+            
+            # Analysis parameters
+            console.print(f"\n[bold]Analysis Parameters:[/]")
+            console.print(f"  Minimum word length: [cyan]{min_length}[/]")
+            console.print(f"  Maximum words shown: [cyan]{max_words}[/]")
+            console.print(f"  Case sensitive: [cyan]{case_sensitive}[/]")
+            console.print(f"  Include stopwords: [cyan]{include_stopwords}[/]")
+            
+        # JSON output
+        else:
+            result = {
+                "success": True,
+                "title": note.title,
+                "category": note.category,
+                "word_frequency": report
+            }
+            click.echo(json.dumps(result, indent=2))
+        
+        return 0
+    
+    @cli_group.command(name="cloudwords")
+    @click.argument("title", type=str)
+    @click.option("--category", "-c", help="Category of the note.")
+    @click.option("--output-dir", "-o", help="Directory to look for the note.")
+    @click.option("--min-length", "-m", type=int, default=4, help="Minimum word length to include.")
+    @click.option("--max-words", "-n", type=int, default=100, help="Maximum number of words to display.")
+    @click.option("--include-stopwords", is_flag=True, help="Include common stopwords in the analysis.")
+    @click.option("--export-path", "-p", help="Path to export word cloud to. Required.")
+    @click.option("--width", type=int, default=800, help="Width of the word cloud image.")
+    @click.option("--height", type=int, default=400, help="Height of the word cloud image.")
+    @click.option("--background", help="Background color of the word cloud (e.g. 'white', '#000000').")
+    @click.option("--output-format", type=click.Choice(["text", "json"]), default="text", help="Output format.")
+    def wordcloud(
+        title, category, output_dir, min_length, max_words, include_stopwords, 
+        export_path, width, height, background, output_format
+    ):
+        """
+        Generate a word cloud image from a note.
+        
+        This command creates a visual word cloud image where words are sized
+        according to their frequency in the note. This requires the wordcloud
+        Python package to be installed.
+        
+        Examples:
+        
+        \b
+        # Basic word cloud generation
+        marknote cloudwords "My Note Title" --export-path ./wordcloud.png
+        
+        \b
+        # Customized word cloud 
+        marknote cloudwords "Research Notes" --min-length 5 --max-words 150 --background "black" --width 1000 --height 600 --export-path ./research_cloud.png
+        """
+        from app.core.note_manager import NoteManager
+        from app.core.word_frequency_analyzer import WordFrequencyAnalyzer
+        
+        console = Console()
+        
+        # Check if export path is provided
+        if not export_path:
+            if output_format == "text":
+                console.print("[bold red]Error:[/] --export-path is required to save the word cloud image.")
+            else:
+                click.echo(json.dumps({
+                    "success": False,
+                    "error": "--export-path is required to save the word cloud image."
+                }))
+            return 1
+            
+        # Check if wordcloud package is available
+        try:
+            import wordcloud
+            from wordcloud import WordCloud
+            import matplotlib.pyplot as plt
+            import numpy as np
+        except ImportError:
+            if output_format == "text":
+                console.print("[bold red]Error:[/] This command requires the wordcloud, matplotlib and numpy packages.")
+                console.print("Please install them with: [cyan]pip install wordcloud matplotlib numpy[/]")
+            else:
+                click.echo(json.dumps({
+                    "success": False,
+                    "error": "This command requires the wordcloud, matplotlib and numpy packages."
+                }))
+            return 1
+        
+        # Initialize note manager
+        note_manager = NoteManager(output_dir)
+        
+        # Get the note
+        note = note_manager.get_note(title, category, output_dir)
+        
+        if not note:
+            if output_format == "text":
+                console.print(f"[bold red]Error:[/] Note '{title}' not found.")
+            else:
+                click.echo(json.dumps({
+                    "success": False,
+                    "error": f"Note '{title}' not found."
+                }))
+            return 1
+        
+        # Create analyzer
+        stopwords = None if include_stopwords else None  # Use default stopwords unless explicitly including them
+        analyzer = WordFrequencyAnalyzer(
+            stopwords=stopwords,
+            min_word_length=min_length,
+            max_words=max_words,
+            case_sensitive=False  # Word clouds typically ignore case
+        )
+        
+        # Analyze and get word frequencies
+        if output_format == "text":
+            console.print("[bold]Generating word cloud...[/]")
+            with Progress(transient=True) as progress:
+                task = progress.add_task("Analyzing word frequency...", total=None)
+                word_frequencies = analyzer.analyze(note.content)
+                progress.update(task, completed=True)
+        else:
+            word_frequencies = analyzer.analyze(note.content)
+        
+        # Create word frequency dictionary
+        word_freq_dict = dict(word_frequencies)
+        
+        # Generate word cloud
+        wc_params = {
+            "width": width,
+            "height": height,
+            "max_words": max_words,
+            "background_color": background or "white",
+            "colormap": "viridis",  # Nice blue-yellow-green colormap
+            "prefer_horizontal": 0.9,  # Slightly prefer horizontal text
+            "relative_scaling": 0.5,  # Relative scaling between frequencies
+        }
+        
+        # Create and save word cloud
+        try:
+            wc = WordCloud(**wc_params)
+            wc.generate_from_frequencies(word_freq_dict)
+            
+            # Save the image
+            wc.to_file(export_path)
+            
+            if output_format == "text":
+                console.print(f"[bold green]Success:[/] Word cloud saved to '{export_path}'")
+                console.print(f"\n[bold]Word Cloud Details:[/]")
+                console.print(f"  Words included: [cyan]{len(word_frequencies)}[/]")
+                console.print(f"  Top words: [cyan]{', '.join([w for w, _ in word_frequencies[:5]])}[/]")
+                console.print(f"  Image size: [cyan]{width}x{height}[/]")
+            else:
+                click.echo(json.dumps({
+                    "success": True,
+                    "export_path": export_path,
+                    "width": width,
+                    "height": height,
+                    "word_count": len(word_frequencies),
+                    "top_words": [w for w, _ in word_frequencies[:10]]
+                }))
+                
+        except Exception as e:
+            if output_format == "text":
+                console.print(f"[bold red]Error:[/] Failed to generate word cloud: {str(e)}")
+            else:
+                click.echo(json.dumps({
+                    "success": False,
+                    "error": f"Failed to generate word cloud: {str(e)}"
+                }))
+            return 1
+        
+        return 0
+    
+    
+    @cli_group.command(name="comparewords")
+    @click.argument("title1", type=str)
+    @click.argument("title2", type=str)
+    @click.option("--category1", help="Category of the first note.")
+    @click.option("--category2", help="Category of the second note.")
+    @click.option("--output-dir", "-o", help="Directory to look for the notes.")
+    @click.option("--min-length", "-m", type=int, default=3, help="Minimum word length to include.")
+    @click.option("--max-words", "-n", type=int, default=30, help="Maximum number of words to display.")
+    @click.option("--include-stopwords", is_flag=True, help="Include common stopwords in the analysis.")
+    @click.option("--unique-only", is_flag=True, help="Show only words unique to each note.")
+    @click.option("--export", "-e", type=click.Choice(['json', 'csv']), help="Export results to JSON or CSV.")
+    @click.option("--export-path", "-p", help="Path to export results to. If not provided, prints to stdout.")
+    @click.option("--output-format", type=click.Choice(["text", "json"]), default="text", help="Output format.")
+    def compare_word_frequencies(
+        title1, title2, category1, category2, output_dir, min_length, max_words, 
+        include_stopwords, unique_only, export, export_path, output_format
+    ):
+        """
+        Compare word frequencies between two notes.
+        
+        This command analyses and compares the word frequencies in two notes,
+        highlighting common and unique vocabulary.
+        
+        Examples:
+        
+        \b
+        # Basic comparison
+        marknote comparewords "Note 1" "Note 2"
+        
+        \b
+        # Show only words unique to each note
+        marknote comparewords "Note 1" "Note 2" --unique-only
+        
+        \b
+        # Compare with more words and export to JSON
+        marknote comparewords "Note 1" "Note 2" --max-words 50 --export json --export-path ./comparison.json
+        """
+        from app.core.note_manager import NoteManager
+        from app.core.word_frequency_analyzer import WordFrequencyAnalyzer
+        
+        console = Console()
+        
+        # Initialize note manager
+        note_manager = NoteManager(output_dir)
+        
+        # Get the notes
+        note1 = note_manager.get_note(title1, category1, output_dir)
+        note2 = note_manager.get_note(title2, category2, output_dir)
+        
+        if not note1:
+            if output_format == "text":
+                console.print(f"[bold red]Error:[/] Note '{title1}' not found.")
+            else:
+                click.echo(json.dumps({
+                    "success": False,
+                    "error": f"Note '{title1}' not found."
+                }))
+            return 1
+            
+        if not note2:
+            if output_format == "text":
+                console.print(f"[bold red]Error:[/] Note '{title2}' not found.")
+            else:
+                click.echo(json.dumps({
+                    "success": False,
+                    "error": f"Note '{title2}' not found."
+                }))
+            return 1
+        
+        # Create analyzer
+        stopwords = None if include_stopwords else None  # Use default stopwords unless explicitly including them
+        analyzer = WordFrequencyAnalyzer(
+            stopwords=stopwords,
+            min_word_length=min_length,
+            max_words=1000,  # Use a high value to get more data for comparison
+            case_sensitive=False
+        )
+        
+        # Analyze word frequencies for both notes
+        if output_format == "text":
+            with Progress(transient=True) as progress:
+                task = progress.add_task("Analyzing notes...", total=None)
+                
+                # Analyze both notes
+                word_freqs1 = dict(analyzer.analyze(note1.content))
+                word_freqs2 = dict(analyzer.analyze(note2.content))
+                
+                # Get general stats
+                report1 = analyzer.generate_report(note1.content)
+                report2 = analyzer.generate_report(note2.content)
+                
+                progress.update(task, completed=True)
+        else:
+            word_freqs1 = dict(analyzer.analyze(note1.content))
+            word_freqs2 = dict(analyzer.analyze(note2.content))
+            report1 = analyzer.generate_report(note1.content)
+            report2 = analyzer.generate_report(note2.content)
+        
+        # Get all words
+        all_words = set(word_freqs1.keys()) | set(word_freqs2.keys())
+        
+        # Calculate common and unique words
+        common_words = set(word_freqs1.keys()) & set(word_freqs2.keys())
+        unique_to_note1 = set(word_freqs1.keys()) - set(word_freqs2.keys())
+        unique_to_note2 = set(word_freqs2.keys()) - set(word_freqs1.keys())
+        
+        # Prepare comparison data
+        comparison_data = {
+            "notes": {
+                "note1": {
+                    "title": note1.title,
+                    "category": note1.category,
+                    "total_words": report1['statistics']['total_words'],
+                    "unique_words": report1['statistics']['total_unique_words_all']
+                },
+                "note2": {
+                    "title": note2.title,
+                    "category": note2.category,
+                    "total_words": report2['statistics']['total_words'],
+                    "unique_words": report2['statistics']['total_unique_words_all']
+                }
+            },
+            "comparison": {
+                "total_unique_words_across_both": len(all_words),
+                "common_words_count": len(common_words),
+                "unique_to_note1_count": len(unique_to_note1),
+                "unique_to_note2_count": len(unique_to_note2),
+                "similarity_percentage": round((len(common_words) / len(all_words) if all_words else 0) * 100, 2)
+            },
+            "common_words": [
+                {
+                    "word": word,
+                    "count_note1": word_freqs1.get(word, 0),
+                    "count_note2": word_freqs2.get(word, 0),
+                    "difference": abs(word_freqs1.get(word, 0) - word_freqs2.get(word, 0))
+                }
+                for word in sorted(common_words, key=lambda w: abs(word_freqs1.get(w, 0) - word_freqs2.get(w, 0)), reverse=True)
+            ][:max_words],
+            "unique_words": {
+                "note1": [{"word": word, "count": word_freqs1.get(word, 0)} 
+                          for word in sorted(unique_to_note1, key=lambda w: word_freqs1.get(w, 0), reverse=True)][:max_words],
+                "note2": [{"word": word, "count": word_freqs2.get(word, 0)}
+                          for word in sorted(unique_to_note2, key=lambda w: word_freqs2.get(w, 0), reverse=True)][:max_words]
+            }
+        }
+        
+        # Handle different output formats
+        if export:
+            # Export to JSON
+            if export == 'json':
+                export_data = comparison_data
+                export_str = json.dumps(export_data, indent=2)
+                
+            # Export to CSV
+            elif export == 'csv':
+                csv_buffer = StringIO()
+                writer = csv.writer(csv_buffer)
+                
+                # Write headers
+                writer.writerow(['Word', f'Count in {note1.title}', f'Count in {note2.title}', 'Difference', 'Status'])
+                
+                # Write common words
+                for item in comparison_data['common_words']:
+                    word = item['word']
+                    count1 = item['count_note1']
+                    count2 = item['count_note2']
+                    diff = item['difference']
+                    writer.writerow([word, count1, count2, diff, 'Common'])
+                
+                # Write unique words for note 1
+                for item in comparison_data['unique_words']['note1'][:max_words//2]:
+                    writer.writerow([item['word'], item['count'], 0, item['count'], f'Unique to {note1.title}'])
+                    
+                # Write unique words for note 2
+                for item in comparison_data['unique_words']['note2'][:max_words//2]:
+                    writer.writerow([item['word'], 0, item['count'], item['count'], f'Unique to {note2.title}'])
+                
+                export_str = csv_buffer.getvalue()
+                
+            # Write to file or stdout
+            if export_path:
+                with open(export_path, 'w') as f:
+                    f.write(export_str)
+                if output_format == "text":
+                    console.print(f"[bold green]Success:[/] Comparison exported to '{export_path}'")
+            else:
+                if output_format == "text":
+                    console.print(export_str)
+                else:
+                    click.echo(export_str)
+        
+        # Display results in terminal
+        elif output_format == "text":
+            # Print header
+            console.print(f"[bold]Word Frequency Comparison:[/]")
+            console.print(f"  [cyan]{note1.title}[/] vs [cyan]{note2.title}[/]")
+            
+            # Print statistics
+            stats = comparison_data['comparison']
+            note1_stats = comparison_data['notes']['note1']
+            note2_stats = comparison_data['notes']['note2']
+            
+            console.print(f"\n[bold]Comparison Statistics:[/]")
+            console.print(f"  Total words in note 1: [cyan]{note1_stats['total_words']}[/]")
+            console.print(f"  Total words in note 2: [cyan]{note2_stats['total_words']}[/]")
+            console.print(f"  Unique words in note 1: [cyan]{note1_stats['unique_words']}[/]")
+            console.print(f"  Unique words in note 2: [cyan]{note2_stats['unique_words']}[/]")
+            console.print(f"  Unique words across both notes: [cyan]{stats['total_unique_words_across_both']}[/]")
+            console.print(f"  Common words count: [cyan]{stats['common_words_count']}[/]")
+            console.print(f"  Unique to note 1: [cyan]{stats['unique_to_note1_count']}[/]")
+            console.print(f"  Unique to note 2: [cyan]{stats['unique_to_note2_count']}[/]")
+            console.print(f"  Vocabulary similarity: [cyan]{stats['similarity_percentage']}%[/]")
+            
+            # If unique Only flag is set, only show unique words
+            if unique_only:
+                # Unique to Note 1
+                console.print(f"\n[bold]Words Unique to '{note1.title}':[/]")
+                unique1_table = Table()
+                unique1_table.add_column("Word", style="cyan")
+                unique1_table.add_column("Count", justify="right")
+                
+                for item in comparison_data['unique_words']['note1']:
+                    unique1_table.add_row(item['word'], str(item['count']))
+                    
+                console.print(unique1_table)
+                
+                # Unique to Note 2
+                console.print(f"\n[bold]Words Unique to '{note2.title}':[/]")
+                unique2_table = Table()
+                unique2_table.add_column("Word", style="cyan")
+                unique2_table.add_column("Count", justify="right")
+                
+                for item in comparison_data['unique_words']['note2']:
+                    unique2_table.add_row(item['word'], str(item['count']))
+                    
+                console.print(unique2_table)
+                
+            else:
+                # Common words with biggest frequency difference
+                console.print(f"\n[bold]Common Words (with biggest frequency difference):[/]")
+                common_table = Table()
+                common_table.add_column("Word", style="cyan")
+                common_table.add_column(f"Count in {note1.title}")
+                common_table.add_column(f"Count in {note2.title}")
+                common_table.add_column("Difference")
+                
+                for item in comparison_data['common_words'][:max_words]:
+                    common_table.add_row(
+                        item['word'], 
+                        str(item['count_note1']),
+                        str(item['count_note2']),
+                        str(item['difference'])
+                    )
+                    
+                console.print(common_table)
+                
+                # Unique to Note 1 (abbreviated)
+                console.print(f"\n[bold]Words Unique to '{note1.title}':[/]")
+                unique1_table = Table()
+                unique1_table.add_column("Word", style="cyan")
+                unique1_table.add_column("Count", justify="right")
+                
+                for item in comparison_data['unique_words']['note1'][:max_words//2]:
+                    unique1_table.add_row(item['word'], str(item['count']))
+                    
+                console.print(unique1_table)
+                if len(comparison_data['unique_words']['note1']) > max_words//2:
+                    console.print(f"  ... and {len(comparison_data['unique_words']['note1']) - max_words//2} more")
+                
+                # Unique to Note 2 (abbreviated)
+                console.print(f"\n[bold]Words Unique to '{note2.title}':[/]")
+                unique2_table = Table()
+                unique2_table.add_column("Word", style="cyan")
+                unique2_table.add_column("Count", justify="right")
+                
+                for item in comparison_data['unique_words']['note2'][:max_words//2]:
+                    unique2_table.add_row(item['word'], str(item['count']))
+                    
+                console.print(unique2_table)
+                if len(comparison_data['unique_words']['note2']) > max_words//2:
+                    console.print(f"  ... and {len(comparison_data['unique_words']['note2']) - max_words//2} more")
+            
+            # Analysis parameters
+            console.print(f"\n[bold]Analysis Parameters:[/]")
+            console.print(f"  Minimum word length: [cyan]{min_length}[/]")
+            console.print(f"  Maximum words shown: [cyan]{max_words}[/]")
+            console.print(f"  Include stopwords: [cyan]{include_stopwords}[/]")
+            console.print(f"  Show unique words only: [cyan]{unique_only}[/]")
+            
+        # JSON output
+        else:
+            click.echo(json.dumps(comparison_data, indent=2))
         
         return 0
 
